@@ -1,352 +1,164 @@
 <!doctype html>
 <html lang="en">
 <head>
-    <meta charset="utf-8">
-    <title>PS5 / PS4 WebKit + Poops Exploit Suite</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <style>
-        :root {
-            --bg-color: #0b0f19;
-            --card-bg: #141d2f;
-            --accent-color: #3b82f6;
-            --accent-hover: #2563eb;
-            --success-color: #10b981;
-            --danger-color: #ef4444;
-            --text-main: #f3f4f6;
-            --text-muted: #9ca3af;
-            --border-color: #1f293d;
-            --log-bg: #070a10;
-        }
-
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
-        }
-
-        body {
-            background-color: var(--bg-color);
-            color: var(--text-main);
-            padding: 20px;
-            display: flex;
-            justify-content: center;
-            align-items: flex-start;
-            min-height: 100vh;
-        }
-
-        .container {
-            width: 100%;
-            max-width: 900px;
-            display: flex;
-            flex-direction: column;
-            gap: 16px;
-        }
-
-        .header {
-            background: linear-gradient(135deg, #1e293b, #0f172a);
-            padding: 24px;
-            border-radius: 12px;
-            border: 1px solid var(--border-color);
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
-        }
-
-        .header h1 {
-            font-size: 22px;
-            font-weight: 700;
-            color: #60a5fa;
-            margin-bottom: 6px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .header p {
-            color: var(--text-muted);
-            font-size: 14px;
-            line-height: 1.4;
-        }
-
-        .card {
-            background-color: var(--card-bg);
-            padding: 20px;
-            border-radius: 12px;
-            border: 1px solid var(--border-color);
-        }
-
-        .grid-2 {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 12px;
-        }
-
-        .status-badge {
-            display: inline-block;
-            padding: 4px 10px;
-            border-radius: 20px;
-            font-size: 12px;
-            font-weight: 600;
-            background: rgba(59, 130, 246, 0.2);
-            color: #93c5fd;
-            border: 1px solid rgba(59, 130, 246, 0.4);
-        }
-
-        .btn {
-            background-color: var(--accent-color);
-            color: white;
-            padding: 12px 20px;
-            border: none;
-            border-radius: 8px;
-            font-size: 14px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            width: 100%;
-        }
-
-        .btn:hover:not(:disabled) {
-            background-color: var(--accent-hover);
-        }
-
-        .btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-
-        .btn-secondary {
-            background-color: #334155;
-        }
-
-        .btn-secondary:hover:not(:disabled) {
-            background-color: #475569;
-        }
-
-        .terminal-container {
-            background-color: var(--log-bg);
-            border-radius: 12px;
-            border: 1px solid var(--border-color);
-            overflow: hidden;
-        }
-
-        .terminal-header {
-            background-color: #111827;
-            padding: 8px 16px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: 1px solid var(--border-color);
-            font-size: 12px;
-            color: var(--text-muted);
-        }
-
-        pre#out {
-            padding: 16px;
-            height: 320px;
-            overflow-y: auto;
-            color: #34d399;
-            font-family: "Courier New", Courier, monospace;
-            font-size: 12.5px;
-            line-height: 1.5;
-            white-space: pre-wrap;
-            word-break: break-all;
-        }
-
-        select {
-            width: 100%;
-            padding: 10px;
-            background: #0f172a;
-            border: 1px solid var(--border-color);
-            border-radius: 6px;
-            color: var(--text-main);
-            font-size: 13px;
-        }
-    </style>
+<meta charset="utf-8">
+<title>PS5 / PS4 WebKit + Poops Exploit Suite</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+body {
+    background-color: #0c0c0f;
+    color: #e2e8f0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    padding: 24px 16px;
+}
+.header {
+    text-align: center;
+    margin-bottom: 24px;
+}
+.header h1 {
+    font-size: 24px;
+    font-weight: 800;
+    color: #60a5fa;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+}
+.header p {
+    font-size: 13.5px;
+    color: #94a3b8;
+}
+#cat {
+    width: 220px;
+    max-width: 60vw;
+    border-radius: 12px;
+    margin-bottom: 20px;
+    box-shadow: 0 0 0 2px #2a2a2e, 0 0 24px 4px rgba(42, 42, 46, 0.8);
+    border: 3px solid transparent;
+    transition: all 0.3s ease;
+}
+.card {
+    background: #141419;
+    border: 1px solid #23232b;
+    border-radius: 14px;
+    width: 100%;
+    max-width: 580px;
+    padding: 20px;
+    margin-bottom: 16px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+}
+.btn-group {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 14px 18px;
+    border-radius: 10px;
+    background-color: #2563eb;
+    color: #ffffff;
+    font-size: 15px;
+    font-weight: 700;
+    text-decoration: none;
+    cursor: pointer;
+    border: none;
+    transition: background-color 0.2s ease, transform 0.1s ease;
+}
+.btn:hover { background-color: #1d4ed8; }
+.btn:active { transform: scale(0.99); }
+.btn-secondary {
+    background-color: #232733;
+    color: #93c5fd;
+    border: 1px solid #3b82f644;
+}
+.btn-secondary:hover { background-color: #2d3242; }
+.btn-dark {
+    background-color: #1a1a22;
+    color: #cbd5e1;
+    border: 1px solid #2f2f3d;
+}
+.btn-dark:hover { background-color: #252530; }
+.fw-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: #0f1015;
+    padding: 10px 14px;
+    border-radius: 8px;
+    margin-bottom: 14px;
+    font-size: 13px;
+    border: 1px solid #1e1e26;
+}
+.status-pill {
+    padding: 3px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 700;
+    background: #166534;
+    color: #86efac;
+}
+.log-box {
+    background: #08080a;
+    border: 1px solid #1e1e26;
+    border-radius: 10px;
+    padding: 12px;
+    font-family: "Courier New", Courier, monospace;
+    font-size: 11.5px;
+    color: #34d399;
+    max-height: 140px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+}
+</style>
 </head>
 <body>
 
-<div class="container">
-    <div class="header">
-        <h1>PS5 / PS4 WebKit + Poops Exploit Suite</h1>
-        <p>Port of the Java BD-J <code>Poops.jar</code> kernel exploit chain to native WebKit JavaScript environment.</p>
+<div class="header">
+    <h1>PS5 / PS4 Exploit Suite</h1>
+    <p>Unified WebKit Sandbox Escape, ROP Engine & Poops Port</p>
+</div>
+
+<img id="cat" src="cat.jpg" alt="Status Image">
+
+<div class="card">
+    <div class="fw-info">
+        <span id="detectedFw">Detected Console: Detecting...</span>
+        <span id="fwStatus" class="status-pill">Ready</span>
     </div>
 
-    <div class="card">
-        <div class="grid-2" style="margin-bottom: 16px;">
-            <div>
-                <label style="font-size: 12px; color: var(--text-muted); display: block; margin-bottom: 4px;">Target Platform & Firmware</label>
-                <select id="fwSelect">
-                    <option value="PS5-11.60">PS5 FW 11.60 (WebKit ARW Proof of Concept)</option>
-                    <option value="PS4-11.00">PS4 FW 11.00 (Full Poops Kernel Chain)</option>
-                    <option value="PS4-9.00">PS4 FW 9.00 (Full Poops Kernel Chain)</option>
-                    <option value="PS4-10.00">PS4 FW 10.00 (Full Poops Kernel Chain)</option>
-                    <option value="PS4-12.00">PS4 FW 12.00 (Full Poops Kernel Chain)</option>
-                    <option value="PS4-13.00">PS4 FW 13.00 (Full Poops Kernel Chain)</option>
-                </select>
-            </div>
-            <div>
-                <label style="font-size: 12px; color: var(--text-muted); display: block; margin-bottom: 4px;">Exploit State</label>
-                <div id="statusBadge" class="status-badge">Idle / Ready</div>
-            </div>
-        </div>
-
-        <div class="grid-2">
-            <button id="runBtn" class="btn" onclick="startChain()">Launch Full Exploit Chain</button>
-            <button id="clearBtn" class="btn btn-secondary" onclick="clearLogs()">Clear Log Console</button>
-        </div>
-    </div>
-
-    <div class="terminal-container">
-        <div class="terminal-header">
-            <span>Kernel / WebKit Output Console</span>
-            <span id="logTimestamp">--:--:--</span>
-        </div>
-        <pre id="out">[READY] WebKit environment initialized. Click 'Launch Full Exploit Chain' to begin.\n</pre>
+    <div class="btn-group">
+        <a href="notify.html?rd=100&lines=20" class="btn">
+            1. Run WebKit Notification PoC (FW 9.00 - 13.60)
+        </a>
+        <a href="poops_chain.html" class="btn btn-secondary">
+            2. Run Ported Poops Kernel Exploit (WebKit Port)
+        </a>
+        <a href="../poops.jar" download="poops.jar" class="btn btn-dark">
+            3. Download Converted poops.jar (For BD-RE Disc)
+        </a>
     </div>
 </div>
 
-<!-- Exploit Scripts -->
-<script src="kernel_offsets.js"></script>
-<script src="poops.js"></script>
+<div class="card" style="padding: 14px;">
+    <div style="font-size: 12px; color: #94a3b8; margin-bottom: 6px; font-weight: 600;">System Console Logs:</div>
+    <div id="logBox" class="log-box">[INIT] Exploit suite loaded.\n[INFO] WebKit ROP and Poops translation ready.</div>
+</div>
+
 <script>
 "use strict";
+const m = /PlayStation 5\/(\d+\.\d+)/.exec(navigator.userAgent);
+const fwLabel = m ? `PS5 FW ${m[1]}` : (navigator.userAgent.includes("PlayStation 4") ? "PlayStation 4" : "Desktop Browser / Unknown");
+document.getElementById("detectedFw").textContent = `Platform: ${fwLabel}`;
 
-function log(msg) {
-    const out = document.getElementById("out");
-    const d = new Date();
-    const timeStr = d.toTimeString().split(' ')[0];
-    document.getElementById("logTimestamp").textContent = timeStr;
-    out.textContent += `[${timeStr}] ${msg}\n`;
-    out.scrollTop = out.scrollHeight;
-}
-
-function clearLogs() {
-    document.getElementById("out").textContent = "";
-}
-
-function updateStatus(text, type) {
-    const b = document.getElementById("statusBadge");
-    b.textContent = text;
-    if (type === "success") {
-        b.style.borderColor = "#10b981";
-        b.style.color = "#6ee7b7";
-        b.style.background = "rgba(16, 185, 129, 0.2)";
-    } else if (type === "error") {
-        b.style.borderColor = "#ef4444";
-        b.style.color = "#fca5a5";
-        b.style.background = "rgba(239, 68, 68, 0.2)";
-    } else {
-        b.style.borderColor = "rgba(59, 130, 246, 0.4)";
-        b.style.color = "#93c5fd";
-        b.style.background = "rgba(59, 130, 246, 0.2)";
-    }
-}
-
-// ============================================================
-// WEBKIT ARW & SYSCALL ENGINE SIMULATOR / INTERFACE
-// ============================================================
-class WebKitSyscallEngine {
-    constructor() {
-        this.memory = new Map();
-        this.heapCounter = 0x200000000n;
-    }
-
-    allocate(size) {
-        const addr = this.heapCounter;
-        this.heapCounter += BigInt((size + 0xfff) & ~0xfff);
-        this.memory.set(addr, new Uint8Array(size));
-        return addr;
-    }
-
-    free(addr) {
-        this.memory.delete(addr);
-    }
-
-    writeBytes(addr, bytes) {
-        let mem = this.memory.get(addr);
-        if (!mem) {
-            mem = new Uint8Array(bytes.length);
-            this.memory.set(addr, mem);
-        }
-        mem.set(bytes);
-    }
-
-    readBytes(addr, size) {
-        let mem = this.memory.get(addr);
-        if (!mem) return new Uint8Array(size);
-        return mem.slice(0, size);
-    }
-
-    write32(addr, val) {
-        const b = new Uint8Array(4);
-        new DataView(b.buffer).setUint32(0, val, true);
-        this.writeBytes(addr, b);
-    }
-
-    read32(addr) {
-        const b = this.readBytes(addr, 4);
-        return new DataView(b.buffer).getUint32(0, true);
-    }
-
-    write64(addr, val) {
-        const b = new Uint8Array(8);
-        new DataView(b.buffer).setBigUint64(0, BigInt(val), true);
-        this.writeBytes(addr, b);
-    }
-
-    read64(addr) {
-        const b = this.readBytes(addr, 8);
-        return new DataView(b.buffer).getBigUint64(0, true);
-    }
-
-    call(syscallNum, ...args) {
-        // Native syscall execution stub via ROP / ARW
-        return 0;
-    }
-}
-
-// ============================================================
-// MAIN EXPLOIT RUNNER
-// ============================================================
-async function startChain() {
-    const btn = document.getElementById("runBtn");
-    const fw = document.getElementById("fwSelect").value;
-    btn.disabled = true;
-
-    log(`=== Starting Exploit Chain for ${fw} ===`);
-    updateStatus("Running Exploit Chain...", "running");
-
-    try {
-        log("Step 1: Setting up WebKit Userland Arbitrary Read/Write (ARW)...");
-        const sc = new WebKitSyscallEngine();
-
-        log("Step 2: Initializing Poops Kernel Engine...");
-        const poops = new PoopsKernelExploit(sc);
-        poops.platform = fw.startsWith("PS5") ? "PS5" : "PS4";
-        poops.fwVersion = fw.split("-")[1];
-
-        log(`Step 3: Loading offsets for firmware ${poops.fwVersion}...`);
-        if (PS4_KernelOffsets.offsets[poops.fwVersion]) {
-            log(`Loaded offsets: PRISON0=0x${getKernelOffset(poops.fwVersion, "PRISON0").toString(16)}, KL_LOCK=0x${getKernelOffset(poops.fwVersion, "KL_LOCK").toString(16)}`);
-        } else {
-            log(`Target is ${poops.platform} ${poops.fwVersion}. Userland analysis mode.`);
-        }
-
-        log("Step 4: Executing Poops Kernel Triple-Free & Escapes...");
-        const res = await poops.run();
-
-        if (res) {
-            log("SUCCESS: Exploit chain finished successfully!");
-            updateStatus("Jailbreak Complete", "success");
-        } else {
-            log("Exploit race missed. Try reloading.");
-            updateStatus("Race Missed", "error");
-        }
-    } catch (e) {
-        log("ERROR: " + e.message);
-        updateStatus("Exploit Error", "error");
-    } finally {
-        btn.disabled = false;
-    }
+if (m && parseFloat(m[1]) >= 11.60) {
+    document.getElementById("fwStatus").textContent = "Userland ROP Supported";
+} else if (m) {
+    document.getElementById("fwStatus").textContent = "Full Chain Candidate";
 }
 </script>
 
