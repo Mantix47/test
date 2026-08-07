@@ -778,9 +778,20 @@ function reportComposition() {
 }
 
 function loadLapseRuntime() {
+    // Ensure SYSCALL is defined before the script loads
+    if (!window.SYSCALL) {
+        window.SYSCALL = {
+            getpid: 20n,
+            fcntl: 92n,
+            pipe: 42n,
+            // Add other syscalls if needed; lapse-runtime.js will extend this object
+        };
+    }
+
     mark("LOADING-RUNTIME", "loading lapse-runtime.js");
     var script = document.createElement('script');
-    script.src = 'lapse-runtime.js';
+    // Add cache-buster to avoid stale cached version
+    script.src = 'lapse-runtime.js?t=' + Date.now();
     script.onload = function() {
         mark("RUNTIME-LOADED", "lapse-runtime.js loaded");
         // Now we have syscall, read64, write64, create_pipe, load_aioshellcode
