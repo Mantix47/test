@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>PS5 Exploit Hub</title>
+<title>PS5 Exploit Hub - Mantix47/test</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 * {
@@ -26,9 +26,9 @@ body {
 #cat {
     width: 240px;
     max-width: 66vw;
-    border-radius: 12px;
+    border-radius: 10px;
     margin-bottom: 24px;
-    box-shadow: 0 0 0 2px #2a2a2e, 0 0 24px 4px rgba(42, 42, 46, 0.8);
+    box-shadow: 0 0 0 2px #2a2a2e, 0 0 20px 4px #2a2a2e;
     transition: transform 0.2s ease;
 }
 #cat:hover {
@@ -46,7 +46,7 @@ body {
     font-size: 1.4rem;
     font-weight: 800;
     letter-spacing: 0.5px;
-    transition: background-color 0.2s ease, transform 0.1s ease;
+    transition: background-color 0.25s ease, transform 0.1s ease;
     text-decoration: none;
     display: inline-block;
     box-shadow: 0 4px 14px rgba(37, 99, 235, 0.4);
@@ -88,11 +88,12 @@ body {
 <img id="cat" src="cat.jpg" alt="PS5 Exploit Status">
 <a tabindex="0" class="btn disabled" id="run">RUN EXPLOIT</a>
 <div id="msg">Detecting PlayStation 5 environment & loading offsets...</div>
-<div id="fwBadge" class="fw-badge">Initializing...</div>
+<div id="fwBadge" class="fw-badge">Initializing Mantix47/test...</div>
 
 <script>
 "use strict";
 
+// Relative file paths mapped to your repository root
 const EXPLOIT_URL = "notify.html";
 const OFFSETS_URLS = ["offsets/offsets.json", "offsets.json"];
 
@@ -104,10 +105,10 @@ const fwBadge = document.getElementById("fwBadge");
 const m = /PlayStation 5\/(\d+)\.(\d+)/.exec(navigator.userAgent);
 let fw = m ? `${m[1].padStart(2, "0")}.${m[2].padStart(2, "0")}` : null;
 
-// Fallback to 11.60 if user-agent is hidden or testing in standard browser
+// Fallback to 11.60 profile if tested on PC / standard browser
 if (!fw) {
     fw = "11.60";
-    fwBadge.textContent = "Profile: PS5 FW 11.60 (Manual Override)";
+    fwBadge.textContent = "Profile: PS5 FW 11.60 (Mantix47/test)";
 } else {
     fwBadge.textContent = `Target: PlayStation 5 (FW ${fw})`;
 }
@@ -119,7 +120,7 @@ function fwNum(s) {
     return parseInt(p[0], 10) * 100 + parseInt(p[1], 10);
 }
 
-// Find closest matching major firmware if exact minor revision is not found
+// Find closest major firmware if exact minor revision is missing
 function nearest(data, target) {
     const want = fwNum(target);
     const maj = target.split(".")[0];
@@ -132,7 +133,7 @@ function nearest(data, target) {
     return best;
 }
 
-// Load offsets from offsets.json
+// Load offsets from Mantix47/test repository files
 async function initOffsets() {
     let data = null;
     for (const url of OFFSETS_URLS) {
@@ -146,13 +147,13 @@ async function initOffsets() {
     }
 
     if (!data) {
-        msg.textContent = "Error: offsets.json not found in repository.";
+        msg.textContent = "Error: offsets.json not found in Mantix47/test repository.";
         return;
     }
 
     entry = data[fw];
     if (entry) {
-        msg.textContent = `Offsets loaded for FW ${fw}. Click RUN EXPLOIT to trigger notification.`;
+        msg.textContent = `Offsets loaded for FW ${fw}. Click RUN EXPLOIT.`;
         run.classList.remove("disabled");
         return;
     }
@@ -167,7 +168,7 @@ async function initOffsets() {
     }
 }
 
-// Build URL query string and launch notify.html
+// Format exact query parameters and launch notify.html
 run.addEventListener("click", function () {
     if (!entry) return;
     const q = new URLSearchParams();
